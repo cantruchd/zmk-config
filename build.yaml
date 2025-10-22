@@ -18,7 +18,7 @@
 #     artifact-name: corne_left_with_studio
 #
 include:
-- board: nice_nano_v2
-  shield: lily58_left nice_view_adapter nice_view
-- board: nice_nano_v2
-  shield: lily58_right nice_view_adapter nice_view
+# Example for a split keyboard with two Nice! Nanos
+# and two nice!view displays
+board: [nice_nano_v2]
+shield: [lily58_left, lily58_right, nice_view_adapter, nice_view]
