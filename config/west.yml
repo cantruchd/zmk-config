@@ -13,8 +13,8 @@ manifest:
       #remote: zmkfirmware
       remote: cantruchd
       import: app/west.yml
-    - name: nice-view-gem #new entry
-      remote: cantruchd #new entry
-      revision: main #new entry
+    # - name: nice-view-gem #new entry
+    #   remote: cantruchd #new entry
+    #   revision: main #new entry
   self:
     path: config
