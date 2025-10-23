@@ -43,11 +43,11 @@
             //                     |      |      |      |        |  |       |      |       |       |
 
             bindings = <
-&bt BT_CLR  &bt BT_SEL 0      &bt BT_SEL 1       &bt BT_SEL 2       &bt BT_SEL 3  &bt BT_SEL 4                    &trans     &trans    &trans        &trans     &trans            &kp EQUAL
-&kp F1      &kp F2            &kp F3             &kp F4             &kp F5        &kp F6                          &kp F7     &kp HOME  &kp UP_ARROW  &kp F10    &kp LEFT_BRACKET  &kp RIGHT_BRACKET
-&kp GRAVE   &kp EXCL          &kp AT             &kp D              &kp DOLLAR    &kp PRCNT                       &kp CARET  &kp LEFT  &kp DOWN      &kp RIGHT  &kp RPAR          &kp SQT
-&trans      &ext_power EP_ON  &ext_power EP_OFF  &ext_power EP_TOG  &trans        &trans        &trans    &trans  &trans     &kp END   &kp PLUS      &kp LBRC   &kp RBRC          &kp BACKSLASH
-                                                 &trans             &kp LEFT_WIN  &trans        &trans    &trans  &mo 3      &trans    &trans
+&kp GRAVE  &bt BT_SEL 0      &bt BT_SEL 1       &bt BT_SEL 2       &bt BT_SEL 3  &bt BT_SEL 4                    &trans     &trans    &trans        &trans     &trans            &kp EQUAL
+&kp F1     &kp F2            &kp F3             &kp F4             &kp F5        &kp F6                          &kp F7     &kp HOME  &kp UP_ARROW  &kp F10    &kp LEFT_BRACKET  &kp RIGHT_BRACKET
+&kp GRAVE  &kp EXCL          &kp AT             &kp D              &kp DOLLAR    &kp PRCNT                       &kp CARET  &kp LEFT  &kp DOWN      &kp RIGHT  &kp RPAR          &kp SQT
+&trans     &ext_power EP_ON  &ext_power EP_OFF  &ext_power EP_TOG  &trans        &trans        &trans    &trans  &trans     &kp END   &kp PLUS      &kp LBRC   &kp RBRC          &kp BACKSLASH
+                                                &bt BT_CLR         &kp LEFT_WIN  &trans        &trans    &trans  &mo 3      &trans    &trans
             >;
         };
 
