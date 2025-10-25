@@ -15,7 +15,7 @@ manifest:
       #remote: zmkfirmware
       remote: cantruchd
       import: app/west.yml
-      revision: wpm_peripheral #new entry
+      revision: grokresult #new entry
     # - name: nice-view-gem #new entry
     #   remote: cantruchd #new entry
     #   revision: main #new entry
