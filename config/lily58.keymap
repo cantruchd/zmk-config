@@ -11,6 +11,16 @@
 #include <dt-bindings/zmk/pointing.h>
 
 / {
+    macros {
+        shutdown_windows: shutdown_windows {
+            compatible = "zmk,behavior-macro";
+            #binding-cells = <0>;
+            bindings = <&kp LG(X) &kp U &kp S>;
+            label = "SHUTDOWN_WINDOWS";
+            wait-ms = <100>;
+        };
+    };
+
     keymap {
         compatible = "zmk,keymap";
 
