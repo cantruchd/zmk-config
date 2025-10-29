@@ -24,27 +24,15 @@
     combos {
         compatible = "zmk,combos";
 
-        combo_R {
+        combo_r {
             bindings = <&kp LS(R)>;
-            key-positions = <31 56>;
+            key-positions = <51 25>;
             layers = <4>;
         };
 
-        greater {
-            bindings = <&kp GREATER_THAN>;
-            key-positions = <57 31>;
-            layers = <4>;
-        };
-
-        r_left {
+        r_right {
             bindings = <&kp LS(R)>;
-            key-positions = <28 51>;
-            layers = <4>;
-        };
-
-        greater_left {
-            bindings = <&kp GREATER_THAN>;
-            key-positions = <57 28 51>;
+            key-positions = <34 56>;
             layers = <4>;
         };
     };
@@ -123,8 +111,8 @@
             bindings = <
 &trans  &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans
 &trans  &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans
-&trans  &trans  &trans  &trans  &kp R   &trans                    &trans  &kp R   &trans  &trans  &trans  &trans
-&trans  &trans  &trans  &trans  &trans  &trans  &trans    &trans  &trans  &trans  &trans  &trans  &trans  &trans
+&trans  &kp R   &kp S   &kp N   &kp I   &trans                    &trans  &kp I   &kp N   &kp S   &kp R   &trans
+&trans  &kp A   &kp O   &kp T   &kp E   &trans  &trans    &trans  &trans  &kp E   &kp T   &kp O   &kp A   &trans
                         &trans  &trans  &trans  &trans    &trans  &mo 5   &trans  &trans
             >;
         };
