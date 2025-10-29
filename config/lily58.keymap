@@ -41,6 +41,12 @@
             key-positions = <28 51>;
             layers = <4>;
         };
+
+        greater_left {
+            bindings = <&kp GREATER_THAN>;
+            key-positions = <57 28 51>;
+            layers = <4>;
+        };
     };
 
     keymap {
@@ -117,7 +123,7 @@
             bindings = <
 &trans  &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans
 &trans  &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans
-&trans  &trans  &trans  &trans  &trans  &trans                    &trans  &kp R   &trans  &trans  &trans  &trans
+&trans  &trans  &trans  &trans  &kp R   &trans                    &trans  &kp R   &trans  &trans  &trans  &trans
 &trans  &trans  &trans  &trans  &trans  &trans  &trans    &trans  &trans  &trans  &trans  &trans  &trans  &trans
                         &trans  &trans  &trans  &trans    &trans  &mo 5   &trans  &trans
             >;
