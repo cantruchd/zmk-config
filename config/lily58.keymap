@@ -105,6 +105,8 @@
 &trans  &trans  &trans  &trans       &trans      &trans  &trans    &trans  &trans  &trans      &trans       &trans  &trans            &trans
                         &bootloader  &sys_reset  &trans  &trans    &trans  &trans  &sys_reset  &bootloader
             >;
+
+            label = "third";
         };
 
         taipo {
@@ -125,6 +127,8 @@
 &trans  &trans  &trans  &trans  &trans  &trans  &trans    &trans  &trans  &trans  &trans  &trans  &trans  &trans
                         &trans  &trans  &trans  &trans    &trans  &trans  &trans  &trans
             >;
+
+            label = "taipo layer1";
         };
 
         reverse {
@@ -135,6 +139,8 @@
 &trans  &trans  &trans  &trans  &trans  &trans  &trans    &trans  &kp B     &kp V   &kp C   &kp X   &kp Z   &kp LSHFT
                         &trans  &trans  &trans  &trans    &trans  &kp LALT  &trans  &trans
             >;
+
+            label = "reverse";
         };
     };
 };
