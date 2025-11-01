@@ -15,7 +15,7 @@ manifest:
       #remote: zmkfirmware
       remote: cantruchd
       import: app/west.yml
-      revision: bluetoothrssi #new entry
+      revision: main #new entry
     # - name: nice-view-gem #new entry
     #   remote: cantruchd #new entry
     #   revision: main #new entry
