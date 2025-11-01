@@ -89,11 +89,11 @@
             //                     |      |      |      |        |  |       |      |       |       |
 
             bindings = <
-&trans            &trans  &trans  &trans   &trans   &trans                     &trans       &trans       &trans     &trans     &trans               &trans
-&kp GRAVE         &kp N1  &kp N2  &kp N3   &kp N4   &kp N5                     &to 4        &kp HOME     &kp UP     &kp N9     &kp LA(PRINTSCREEN)  &kp BACKSLASH
-&kp LEFT_CONTROL  &kp F2  &kp F3  &kp F4   &kp F5   &kp F6                     &trans       &kp LEFT     &kp DOWN   &kp RIGHT  &kp RIGHT            &trans
-&kp LEFT_SHIFT    &kp F8  &kp F9  &kp F10  &kp F11  &kp F12  &trans    &trans  &kp KP_PLUS  &kp END      &kp EQUAL  &kp LBKT   &kp RBKT             &kp BSLH
-                                  &trans   &trans   &mo 3    &trans    &trans  &trans       &bootloader  &trans
+&trans            &trans  &trans  &trans   &trans   &trans                     &trans       &trans       &trans      &trans     &trans               &trans
+&kp GRAVE         &kp N1  &kp N2  &kp N3   &kp N4   &kp N5                     &to 4        &kp HOME     &kp UP      &kp N9     &kp LA(PRINTSCREEN)  &kp BACKSLASH
+&kp LEFT_CONTROL  &kp F2  &kp F3  &kp F4   &kp F5   &kp F6                     &trans       &kp LEFT     &kp DOWN    &kp RIGHT  &kp RIGHT            &trans
+&kp LEFT_SHIFT    &kp F8  &kp F9  &kp F10  &kp F11  &kp F12  &trans    &trans  &kp KP_PLUS  &kp END      &kp EQUAL   &kp LBKT   &kp RBKT             &kp BSLH
+                                  &trans   &trans   &mo 3    &trans    &trans  &trans       &bootloader  &sys_reset
             >;
         };
 
@@ -117,6 +117,8 @@
 &trans  &kp A   &kp O   &kp T   &kp E   &trans  &trans    &trans  &trans  &kp E   &kp T   &kp O   &kp A   &trans
                         &trans  &trans  &trans  &trans    &trans  &mo 5   &trans  &trans
             >;
+
+            label = "taipo";
         };
 
         taipo_layer1 {
