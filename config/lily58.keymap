@@ -135,11 +135,11 @@
 
         reverse {
             bindings = <
-&trans  &trans  &trans  &trans  &trans  &trans                    &kp N5    &kp N4  &kp N3  &kp N2  &kp N1  &kp ESC
-&trans  &trans  &trans  &trans  &trans  &trans                    &kp T     &kp R   &kp E   &kp W   &kp Q   &kp TAB
-&trans  &trans  &trans  &trans  &trans  &trans                    &kp G     &kp F   &kp D   &kp S   &kp A   &sk LCTRL
-&trans  &trans  &trans  &trans  &trans  &trans  &trans    &trans  &kp B     &kp V   &kp C   &kp X   &kp Z   &sk LSHFT
-                        &trans  &trans  &trans  &trans    &trans  &kp LALT  &trans  &trans
+&trans  &trans  &trans  &trans  &trans  &trans                    &kp N5    &kp N4  &kp N3        &kp N2  &kp N1  &kp ESC
+&trans  &trans  &trans  &trans  &trans  &trans                    &kp T     &kp R   &kp E         &kp W   &kp Q   &kp TAB
+&trans  &trans  &trans  &trans  &trans  &trans                    &kp G     &kp F   &kp D         &kp S   &kp A   &sk LCTRL
+&trans  &trans  &trans  &trans  &trans  &trans  &trans    &trans  &kp B     &kp V   &kp C         &kp X   &kp Z   &sk LSHFT
+                        &trans  &trans  &trans  &trans    &trans  &sk LALT  &trans  &sk LEFT_GUI
             >;
 
             label = "reverse";
