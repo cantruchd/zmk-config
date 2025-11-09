@@ -35,6 +35,12 @@
             key-positions = <34 56>;
             layers = <4>;
         };
+
+        alt_f4 {
+            bindings = <&kp LA(F4)>;
+            key-positions = <25 28>;
+            layers = <0>;
+        };
     };
 
     keymap {
