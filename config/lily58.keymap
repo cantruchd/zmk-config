@@ -76,11 +76,11 @@
             //                     |      |      |      |        |  |       |      |       |       |
 
             bindings = <
-&kp GRAVE  &bt BT_SEL 0       &bt BT_SEL 1     &bt BT_SEL 2       &bt BT_SEL 3     &bt BT_SEL 4                         &trans     &trans    &trans        &trans          &trans            &kp EQUAL
-&kp F1     &mkp MCLK          &msc SCRL_LEFT   &mmv MOVE_UP       &msc SCRL_UP     &msc SCRL_RIGHT                      &kp F7     &kp HOME  &kp UP_ARROW  &kp F10         &kp LEFT_BRACKET  &kp RIGHT_BRACKET
-&kp GRAVE  &mkp LCLK          &mmv MOVE_LEFT   &mmv MOVE_DOWN     &mmv MOVE_RIGHT  &mkp RCLK                            &kp CARET  &kp LEFT  &kp DOWN      &kp RIGHT       &kp RPAR          &kp SQT
-&trans     &ext_power EP_TOG  &msc SCRL_RIGHT  &ext_power EP_TOG  &msc SCRL_DOWN   &shutdown_windows  &trans    &trans  &trans     &kp END   &kp PLUS      &kp LEFT_BRACE  &kp RIGHT_BRACE   &kp BACKSLASH
-                                               &bt BT_CLR         &bootloader      &trans             &trans    &trans  &mo 3      &trans    &trans
+&kp GRAVE  &bt BT_SEL 0  &bt BT_SEL 1     &bt BT_SEL 2       &bt BT_SEL 3     &bt BT_SEL 4                         &trans     &trans    &trans        &trans          &trans            &kp EQUAL
+&kp F1     &mkp MCLK     &msc SCRL_LEFT   &mmv MOVE_UP       &msc SCRL_UP     &msc SCRL_RIGHT                      &kp F7     &kp HOME  &kp UP_ARROW  &kp F10         &kp LEFT_BRACKET  &kp RIGHT_BRACKET
+&kp GRAVE  &mkp LCLK     &mmv MOVE_LEFT   &mmv MOVE_DOWN     &mmv MOVE_RIGHT  &mkp RCLK                            &kp CARET  &kp LEFT  &kp DOWN      &kp RIGHT       &kp RPAR          &kp SQT
+&trans     &soft_off     &msc SCRL_RIGHT  &ext_power EP_TOG  &msc SCRL_DOWN   &shutdown_windows  &trans    &trans  &trans     &kp END   &kp PLUS      &kp LEFT_BRACE  &kp RIGHT_BRACE   &kp BACKSLASH
+                                          &bt BT_CLR         &bootloader      &trans             &trans    &trans  &mo 3      &trans    &trans
             >;
         };
 
@@ -97,7 +97,7 @@
             bindings = <
 &trans            &trans  &trans  &trans   &trans   &trans                     &trans             &trans       &trans      &trans     &trans               &trans
 &kp GRAVE         &kp N1  &kp N2  &kp N3   &kp N4   &kp N5                     &to 4              &kp HOME     &kp UP      &kp N9     &kp LA(PRINTSCREEN)  &kp BACKSLASH
-&kp LEFT_CONTROL  &kp F2  &kp F3  &kp F4   &kp F5   &kp F6                     &trans             &kp LEFT     &kp DOWN    &kp RIGHT  &kp RIGHT            &trans
+&kp LEFT_CONTROL  &kp F2  &kp F3  &kp F4   &kp F5   &kp F6                     &soft_off          &kp LEFT     &kp DOWN    &kp RIGHT  &kp RIGHT            &trans
 &kp LEFT_SHIFT    &kp F8  &kp F9  &kp F10  &kp F11  &kp F12  &trans    &trans  &shutdown_windows  &kp END      &kp EQUAL   &kp LBKT   &kp RBKT             &sk RIGHT_SHIFT
                                   &trans   &trans   &mo 3    &trans    &trans  &trans             &bootloader  &sys_reset
             >;
