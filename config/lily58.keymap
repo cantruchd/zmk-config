@@ -95,10 +95,10 @@
             //                     |      |      |      |        |  |       |      |       |       |
 
             bindings = <
-&trans            &trans  &trans  &trans   &trans   &trans                     &kp F6             &kp RC(F5)   &kp LA(F4)  &kp F3     &kp F2               &kp F1
+&trans            &trans  &trans  &trans   &trans   &trans                     &kp F6             &kp RC(F5)   &kp LA(F4)  &kp F3     &kp F2               &kp EQUAL
 &kp GRAVE         &kp N1  &kp N2  &kp N3   &kp N4   &kp N5                     &to 4              &kp HOME     &kp UP      &kp N9     &kp LA(PRINTSCREEN)  &kp DELETE
-&kp LEFT_CONTROL  &kp F2  &kp F3  &kp F4   &kp F5   &kp F6                     &soft_off          &kp LEFT     &kp DOWN    &kp RIGHT  &kp RIGHT            &kp F7
-&kp LEFT_SHIFT    &kp F8  &kp F9  &kp F10  &kp F11  &kp F12  &trans    &trans  &shutdown_windows  &kp END      &kp EQUAL   &kp LBKT   &kp RBKT             &sk RIGHT_SHIFT
+&kp LEFT_CONTROL  &kp F2  &kp F3  &kp F4   &kp F5   &kp F6                     &soft_off          &kp LEFT     &kp DOWN    &kp RIGHT  &kp RIGHT            &kp LA(ENTER)
+&kp LEFT_SHIFT    &kp F8  &kp F9  &kp F10  &kp F11  &kp F12  &trans    &trans  &shutdown_windows  &kp END      &kp LG(V)   &kp LBKT   &kp RBKT             &sk RIGHT_SHIFT
                                   &trans   &trans   &mo 3    &trans    &trans  &trans             &bootloader  &sys_reset
             >;
         };
@@ -151,16 +151,16 @@
             label = "reverse";
         };
 
-        layer_7 {
+        control {
             bindings = <
-&trans  &trans  &trans  &trans     &trans     &trans                    &trans      &trans           &trans     &trans         &trans  &trans
-&trans  &trans  &trans  &trans     &trans     &trans                    &kp RC(F5)  &kp LA(F4)       &trans     &trans         &trans  &trans
-&trans  &trans  &trans  &trans     &trans     &trans                    &trans      &kp LA(LC(DEL))  &kp LG(D)  &kp LG(LS(S))  &trans  &kp LC(ENTER)
-&trans  &trans  &trans  &kp LC(C)  &kp LC(V)  &trans  &trans    &trans  &trans      &kp LC(V)        &kp LC(C)  &kp LG(X)      &trans  &trans
-                        &trans     &trans     &trans  &trans    &trans  &trans      &trans           &trans
+&trans  &trans  &trans  &trans     &trans     &trans                    &trans        &trans           &kp LS(UP_ARROW)  &trans         &trans     &trans
+&trans  &trans  &trans  &trans     &trans     &trans                    &kp RC(F5)    &kp LA(F4)       &kp RS(DOWN)      &trans         &trans     &kp BACKSLASH
+&trans  &trans  &trans  &trans     &trans     &trans                    &kp LS(HOME)  &kp LA(LC(DEL))  &kp LG(D)         &kp LG(LS(S))  &kp RC(A)  &kp LC(ENTER)
+&trans  &trans  &trans  &kp LC(C)  &kp LC(V)  &trans  &trans    &trans  &kp RS(END)   &kp LC(V)        &kp LC(C)         &kp LG(X)      &kp LC(Z)  &sk LG(LEFT_SHIFT)
+                        &trans     &trans     &trans  &trans    &trans  &trans        &trans           &trans
             >;
 
-            label = "control layer";
+            label = "control";
         };
     };
 };
