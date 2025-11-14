@@ -57,11 +57,11 @@
             //                     | ALT  | GUI  | LOWER|  SPACE |  | ENTER | RAISE| BSPC  | GUI   |
 
             bindings = <
-&kp ESC    &kp N1  &kp N2  &kp N3    &kp N4        &kp N5                         &kp N6  &kp N7       &kp N8             &kp N9   &kp N0    &kp MINUS
-&kp TAB    &kp Q   &kp W   &kp E     &kp R         &kp T                          &kp Y   &kp U        &kp I              &kp O    &kp P     &kp BACKSPACE
-&kp LCTRL  &kp A   &kp S   &kp D     &kp F         &kp G                          &kp H   &kp J        &kp K              &kp L    &kp SEMI  &kp ENTER
-&kp LSHFT  &kp Z   &kp X   &kp C     &kp V         &kp B   &kp LBKT     &kp RBKT  &kp N   &kp M        &kp COMMA          &kp DOT  &kp FSLH  &kp RSHFT
-                           &kp LALT  &kp LEFT_WIN  &mo 1   &kp SPACE    &kp RET   &mo 2   &lt 6 SPACE  &kp RIGHT_CONTROL
+&kp ESC    &kp N1  &kp N2  &kp N3    &kp N4        &kp N5                         &kp N6  &kp N7       &kp N8          &kp N9   &kp N0    &kp MINUS
+&kp TAB    &kp Q   &kp W   &kp E     &kp R         &kp T                          &kp Y   &kp U        &kp I           &kp O    &kp P     &kp BACKSPACE
+&kp LCTRL  &kp A   &kp S   &kp D     &kp F         &kp G                          &kp H   &kp J        &kp K           &kp L    &kp SEMI  &kp ENTER
+&kp LSHFT  &kp Z   &kp X   &kp C     &kp V         &kp B   &kp LBKT     &kp RBKT  &kp N   &kp M        &kp COMMA       &kp DOT  &kp FSLH  &kp RSHFT
+                           &kp LALT  &kp LEFT_WIN  &mo 1   &kp SPACE    &kp RET   &mo 2   &lt 6 SPACE  &lt 7 LEFT_GUI
             >;
         };
 
@@ -95,9 +95,9 @@
             //                     |      |      |      |        |  |       |      |       |       |
 
             bindings = <
-&trans            &trans  &trans  &trans   &trans   &trans                     &trans             &trans       &trans      &trans     &trans               &trans
+&trans            &trans  &trans  &trans   &trans   &trans                     &kp F6             &kp RC(F5)   &kp LA(F4)  &kp F3     &kp F2               &kp F1
 &kp GRAVE         &kp N1  &kp N2  &kp N3   &kp N4   &kp N5                     &to 4              &kp HOME     &kp UP      &kp N9     &kp LA(PRINTSCREEN)  &kp DELETE
-&kp LEFT_CONTROL  &kp F2  &kp F3  &kp F4   &kp F5   &kp F6                     &soft_off          &kp LEFT     &kp DOWN    &kp RIGHT  &kp RIGHT            &trans
+&kp LEFT_CONTROL  &kp F2  &kp F3  &kp F4   &kp F5   &kp F6                     &soft_off          &kp LEFT     &kp DOWN    &kp RIGHT  &kp RIGHT            &kp F7
 &kp LEFT_SHIFT    &kp F8  &kp F9  &kp F10  &kp F11  &kp F12  &trans    &trans  &shutdown_windows  &kp END      &kp EQUAL   &kp LBKT   &kp RBKT             &sk RIGHT_SHIFT
                                   &trans   &trans   &mo 3    &trans    &trans  &trans             &bootloader  &sys_reset
             >;
@@ -149,6 +149,18 @@
             >;
 
             label = "reverse";
+        };
+
+        layer_7 {
+            bindings = <
+&trans  &trans  &trans  &trans     &trans     &trans                    &trans      &trans           &trans     &trans         &trans  &trans
+&trans  &trans  &trans  &trans     &trans     &trans                    &kp RC(F5)  &kp LA(F4)       &trans     &trans         &trans  &trans
+&trans  &trans  &trans  &trans     &trans     &trans                    &trans      &kp LA(LC(DEL))  &kp LG(D)  &kp LG(LS(S))  &trans  &kp LC(ENTER)
+&trans  &trans  &trans  &kp LC(C)  &kp LC(V)  &trans  &trans    &trans  &trans      &kp LC(V)        &kp LC(C)  &kp LG(X)      &trans  &trans
+                        &trans     &trans     &trans  &trans    &trans  &trans      &trans           &trans
+            >;
+
+            label = "control layer";
         };
     };
 };
