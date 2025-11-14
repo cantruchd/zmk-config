@@ -153,10 +153,10 @@
 
         control {
             bindings = <
-&trans  &trans  &trans  &trans     &trans     &trans                    &trans        &trans           &kp LS(UP_ARROW)  &trans         &trans     &trans
-&trans  &trans  &trans  &trans     &trans     &trans                    &kp RC(F5)    &kp LA(F4)       &kp RS(DOWN)      &trans         &trans     &kp BACKSLASH
-&trans  &trans  &trans  &trans     &trans     &trans                    &kp LS(HOME)  &kp LA(LC(DEL))  &kp LG(D)         &kp LG(LS(S))  &kp RC(A)  &kp LC(ENTER)
-&trans  &trans  &trans  &kp LC(C)  &kp LC(V)  &trans  &trans    &trans  &kp RS(END)   &kp LC(V)        &kp LC(C)         &kp LG(X)      &kp LC(Z)  &sk LG(LEFT_SHIFT)
+&trans  &trans  &trans  &trans     &trans     &trans                    &trans        &kp LS(LEFT)     &kp LS(UP_ARROW)  &kp RS(RIGHT)  &trans         &trans
+&trans  &trans  &trans  &trans     &trans     &trans                    &kp RC(F5)    &kp LA(F4)       &kp RS(DOWN)      &trans         &kp BACKSLASH  &kp LA(TAB)
+&trans  &trans  &trans  &trans     &trans     &trans                    &kp LS(HOME)  &kp LA(LC(DEL))  &kp LG(D)         &kp LG(LS(S))  &kp RC(A)      &kp LC(ENTER)
+&trans  &trans  &trans  &kp LC(C)  &kp LC(V)  &trans  &trans    &trans  &kp RS(END)   &kp LC(V)        &kp LC(C)         &kp LG(X)      &kp LC(Z)      &sk LG(LEFT_SHIFT)
                         &trans     &trans     &trans  &trans    &trans  &trans        &trans           &trans
             >;
 
