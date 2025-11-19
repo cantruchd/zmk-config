@@ -55,7 +55,7 @@
             compatible = "zmk,behavior-tap-dance";
             label = "BACKSPACE_DELETE";
             #binding-cells = <0>;
-            bindings = <&kp BACKSPACE>, <&kp DELETE>;
+            bindings = <&kp BACKSPACE>, <&mt DELETE BACKSPACE>;
         };
     };
 
@@ -76,7 +76,7 @@
 &kp ESC          &mt F1 NUMBER_1  &mt F2 NUMBER_2  &mt F3 NUMBER_3  &mt F4 NUMBER_4  &mt F5 N5                           &mt F6 NUMBER_6  &mt F7 N7         &mt F8 NUMBER_8           &mt F9 N9               &mt F10 NUMBER_0     &mt EQUAL MINUS
 &mt LA(TAB) TAB  &kp Q            &kp W            &kp E            &kp R            &kp T                               &kp Y            &mt HOME U        &mt UP_ARROW I            &kp O                   &mt LG(P) P          &backspace_delete
 &kp LCTRL        &mt LC(A) A      &mt LC(S) S      &mt LG(D) D      &kp F            &kp G                               &kp H            &mt LEFT_ARROW J  &mt DOWN_ARROW K          &mt RIGHT L             &kp SEMI             &kp ENTER
-&kp LSHFT        &mt LC(Z) Z      &mt LC(X) X      &mt LC(C) C      &kp V            &kp B        &kp LBKT     &kp RBKT  &kp N            &mt END M         &mt LEFT_BRACE LESS_THAN  &mt RIGHT_BRACE PERIOD  &mt BACKSLASH SLASH  &kp RSHFT
+&kp LSHFT        &mt LC(Z) Z      &mt LC(X) X      &mt LC(C) C      &mt LC(V) V      &mt LC(B) B  &kp LBKT     &kp RBKT  &kp N            &mt END M         &mt LEFT_BRACE LESS_THAN  &mt RIGHT_BRACE PERIOD  &mt BACKSLASH SLASH  &kp RSHFT
                                                    &mt LALT LEFT    &kp LEFT_WIN     &lt 1 RIGHT  &kp SPACE    &kp RET   &lt 2 HOME       &lt 6 SPACE       &lt 7 END
             >;
         };
@@ -169,11 +169,11 @@
 
         control {
             bindings = <
-&trans  &trans  &trans  &trans     &trans     &trans                    &kp LC(F5)    &kp LA(F4)    &kp LS(UP_ARROW)  &kp RS(RIGHT)  &kp EQUAL  &kp BACKSLASH
-&trans  &trans  &trans  &trans     &trans     &trans                    &kp RC(F5)    &kp RS(LEFT)  &kp RS(DOWN)      &kp LS(RIGHT)  &kt LG(P)  &kp LA(TAB)
-&trans  &trans  &trans  &trans     &trans     &trans                    &kp LS(HOME)  &kp LC(F)     &kp LG(D)         &kp LG(LS(S))  &kp RC(A)  &kp LC(ENTER)
-&trans  &trans  &trans  &kp LC(C)  &kp LC(V)  &trans  &trans    &trans  &kp RS(END)   &kp LC(V)     &kp LC(C)         &kp LG(X)      &kp LC(Z)  &sk LG(LEFT_SHIFT)
-                        &trans     &trans     &trans  &trans    &trans  &trans        &trans        &trans
+&kp LC(ESCAPE)    &kp LC(NUMBER_1)  &kp LC(NUMBER_2)  &kp LC(NUMBER_3)  &kp LC(NUMBER_4)  &kp LC(N5)                    &kp LC(F5)    &kp LA(F4)    &kp LS(UP_ARROW)  &kp RS(RIGHT)  &kp EQUAL  &kp BACKSLASH
+&kp LC(TAB)       &kp LC(Q)         &kp LC(E)         &kp LC(W)         &kp LC(R)         &kp LC(T)                     &kp RC(F5)    &kp RS(LEFT)  &kp RS(DOWN)      &kp LS(RIGHT)  &kt LG(P)  &kp LA(TAB)
+&kp LEFT_CONTROL  &kp LC(A)         &kp LC(S)         &kp LC(D)         &kp LC(F)         &kp LC(G)                     &kp LS(HOME)  &kp LC(F)     &kp LG(D)         &kp LG(LS(S))  &kp RC(A)  &kp LC(ENTER)
+&kp LEFT_SHIFT    &kp RC(Z)         &kp LC(X)         &kp LC(C)         &kp LC(V)         &kp LC(B)   &trans    &trans  &kp RS(END)   &kp LC(V)     &kp LC(C)         &kp LG(X)      &kp LC(Z)  &sk LG(LEFT_SHIFT)
+                                                      &kp LC(LEFT_ALT)  &trans            &trans      &trans    &trans  &trans        &trans        &trans
             >;
 
             label = "control";
