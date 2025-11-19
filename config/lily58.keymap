@@ -12,7 +12,10 @@
 
 &sk { release-after-ms = <10000>; };
 
-&mt { flavor = "tap-preferred"; };
+&mt {
+    flavor = "tap-preferred";
+    tapping-term-ms = <300>;
+};
 
 / {
     macros {
