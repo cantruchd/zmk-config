@@ -12,6 +12,8 @@
 
 &sk { release-after-ms = <10000>; };
 
+&mt { flavor = "tap-preferred"; };
+
 / {
     macros {
         shutdown_windows: shutdown_windows {
