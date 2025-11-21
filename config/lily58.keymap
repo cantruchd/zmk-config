@@ -10,6 +10,13 @@
 #include <dt-bindings/zmk/keys.h>
 #include <dt-bindings/zmk/pointing.h>
 
+&sk { release-after-ms = <10000>; };
+
+&mt {
+    flavor = "tap-preferred";
+    tapping-term-ms = <300>;
+};
+
 / {
     macros {
         shutdown_windows: shutdown_windows {
@@ -21,11 +28,42 @@
         };
     };
 
+    combos {
+        compatible = "zmk,combos";
+
+        combo_r {
+            bindings = <&kp LS(R)>;
+            key-positions = <51 25>;
+            layers = <4>;
+        };
+
+        r_right {
+            bindings = <&kp LS(R)>;
+            key-positions = <34 56>;
+            layers = <4>;
+        };
+
+        alt_f4 {
+            bindings = <&kp LA(F4)>;
+            key-positions = <25 28>;
+            layers = <0>;
+        };
+    };
+
+    behaviors {
+        backspace_delete: backspace_delete {
+            compatible = "zmk,behavior-tap-dance";
+            label = "BACKSPACE_DELETE";
+            #binding-cells = <0>;
+            bindings = <&kp BACKSPACE>, <&mt DELETE BACKSPACE>;
+        };
+    };
+
     keymap {
         compatible = "zmk,keymap";
 
         default_layer {
-            display-name = "Default Layer";
+            display-name = "Default";
 
             // ------------------------------------------------------------------------------------------------------------
             // |  ESC  |  1  |  2  |  3   |  4   |  5   |                   |  6   |  7    |  8    |  9   |   0   |   `   |
@@ -35,16 +73,16 @@
             //                     | ALT  | GUI  | LOWER|  SPACE |  | ENTER | RAISE| BSPC  | GUI   |
 
             bindings = <
-&kp ESC    &kp N1  &kp N2  &kp N3    &kp N4        &kp N5                         &kp N6  &kp N7     &kp N8             &kp N9   &kp N0    &kp MINUS
-&kp TAB    &kp Q   &kp W   &kp E     &kp R         &kp T                          &kp Y   &kp U      &kp I              &kp O    &kp P     &kp BACKSPACE
-&kp LCTRL  &kp A   &kp S   &kp D     &kp F         &kp G                          &kp H   &kp J      &kp K              &kp L    &kp SEMI  &kp ENTER
-&kp LSHFT  &kp Z   &kp X   &kp C     &kp V         &kp B   &kp LBKT     &kp RBKT  &kp N   &kp M      &kp COMMA          &kp DOT  &kp FSLH  &kp RSHFT
-                           &kp LALT  &kp LEFT_WIN  &mo 1   &kp SPACE    &kp RET   &mo 2   &kp SPACE  &kp RIGHT_CONTROL
+&kp ESC          &mt F1 NUMBER_1  &mt F2 NUMBER_2  &mt F3 NUMBER_3  &mt F4 NUMBER_4  &mt F5 N5                           &mt F6 NUMBER_6  &mt F7 N7         &mt F8 NUMBER_8           &mt F9 N9               &mt F10 NUMBER_0     &mt EQUAL MINUS
+&mt LA(TAB) TAB  &kp Q            &kp W            &kp E            &kp R            &kp T                               &kp Y            &mt HOME U        &mt UP_ARROW I            &kp O                   &mt LG(P) P          &backspace_delete
+&kp LCTRL        &mt LC(A) A      &mt LC(S) S      &mt LG(D) D      &kp F            &kp G                               &kp H            &mt LEFT_ARROW J  &mt DOWN_ARROW K          &mt RIGHT L             &kp SEMI             &kp ENTER
+&kp LSHFT        &mt LC(Z) Z      &mt LC(X) X      &mt LC(C) C      &mt LC(V) V      &mt LC(B) B  &kp LBKT     &kp RBKT  &kp N            &mt END M         &mt LEFT_BRACE LESS_THAN  &mt RIGHT_BRACE PERIOD  &mt BACKSLASH SLASH  &kp RSHFT
+                                                   &mt LALT LEFT    &kp LEFT_WIN     &lt 1 RIGHT  &kp SPACE    &kp RET   &lt 2 HOME       &lt 6 SPACE       &lt 7 END
             >;
         };
 
         lower_layer {
-            display-name = "Lower Layer";
+            display-name = "Lower";
 
             // ------------------------------------------------------------------------------------------------------------
             // | BTCLR | BT1 | BT2 |  BT3 |  BT4 |  BT5 |                   |      |       |       |      |       |       |
@@ -54,16 +92,16 @@
             //                     |      |      |      |        |  |       |      |       |       |
 
             bindings = <
-&kp GRAVE  &bt BT_SEL 0       &bt BT_SEL 1     &bt BT_SEL 2       &bt BT_SEL 3     &bt BT_SEL 4                       &trans     &trans    &trans        &trans          &trans            &kp EQUAL
-&kp F1     &mkp MCLK          &msc SCRL_LEFT   &mmv MOVE_UP       &msc SCRL_UP     &msc SCRL_RIGHT                    &kp F7     &kp HOME  &kp UP_ARROW  &kp F10         &kp LEFT_BRACKET  &kp RIGHT_BRACKET
-&kp GRAVE  &mkp LCLK          &mmv MOVE_LEFT   &mmv MOVE_DOWN     &mmv MOVE_RIGHT  &mkp RCLK                          &kp CARET  &kp LEFT  &kp DOWN      &kp RIGHT       &kp RPAR          &kp SQT
-&trans     &ext_power EP_TOG  &msc SCRL_RIGHT  &ext_power EP_TOG  &msc SCRL_DOWN   &trans           &trans    &trans  &trans     &kp END   &kp PLUS      &kp LEFT_BRACE  &kp RIGHT_BRACE   &kp BACKSLASH
-                                               &bt BT_CLR         &bootloader      &trans           &trans    &trans  &mo 3      &trans    &trans
+&kp GRAVE  &bt BT_SEL 0  &bt BT_SEL 1     &bt BT_SEL 2       &bt BT_SEL 3     &bt BT_SEL 4                         &trans     &trans    &trans          &trans           &trans            &kp EQUAL
+&kp F1     &mkp MCLK     &msc SCRL_LEFT   &mmv MOVE_UP       &msc SCRL_UP     &msc SCRL_RIGHT                      &kp F7     &kp HOME  &kp UP_ARROW    &kp F10          &kp LEFT_BRACKET  &kp RIGHT_BRACKET
+&kp GRAVE  &mkp LCLK     &mmv MOVE_LEFT   &mmv MOVE_DOWN     &mmv MOVE_RIGHT  &mkp RCLK                            &kp CARET  &kp LEFT  &kp DOWN        &kp RIGHT        &kp RPAR          &kp SQT
+&trans     &soft_off     &msc SCRL_RIGHT  &ext_power EP_TOG  &msc SCRL_DOWN   &shutdown_windows  &trans    &trans  &trans     &kp END   &kp LEFT_BRACE  &kp RIGHT_BRACE  &kp PLUS          &kp BACKSLASH
+                                          &bt BT_CLR         &bootloader      &trans             &trans    &trans  &mo 3      &trans    &trans
             >;
         };
 
         raise_layer {
-            display-name = "Raise Layer";
+            display-name = "Raise";
 
             // ------------------------------------------------------------------------------------------------------------
             // |       |     |     |      |      |      |                   |      |       |       |      |       |       |
@@ -73,22 +111,72 @@
             //                     |      |      |      |        |  |       |      |       |       |
 
             bindings = <
-&trans            &trans  &trans  &trans   &trans   &trans                     &trans       &trans       &trans     &trans     &trans               &trans
-&kp GRAVE         &kp N1  &kp N2  &kp N3   &kp N4   &kp N5                     &kp N6       &kp HOME     &kp UP     &kp N9     &kp LA(PRINTSCREEN)  &kp BACKSLASH
-&kp LEFT_CONTROL  &kp F2  &kp F3  &kp F4   &kp F5   &kp F6                     &trans       &kp LEFT     &kp DOWN   &kp RIGHT  &kp RIGHT            &trans
-&kp LEFT_SHIFT    &kp F8  &kp F9  &kp F10  &kp F11  &kp F12  &trans    &trans  &kp KP_PLUS  &kp END      &kp EQUAL  &kp LBKT   &kp RBKT             &kp BSLH
-                                  &trans   &trans   &mo 3    &trans    &trans  &trans       &bootloader  &trans
+&trans            &trans  &trans  &trans   &trans   &trans                     &kp F6             &kp RC(F5)   &kp LA(F4)      &kp F3           &kp F2               &kp EQUAL
+&kp GRAVE         &kp N1  &kp N2  &kp N3   &kp N4   &kp N5                     &to 4              &kp HOME     &kp UP          &kp N9           &kp LA(PRINTSCREEN)  &kp DELETE
+&kp LEFT_CONTROL  &kp F2  &kp F3  &kp F4   &kp F5   &kp F6                     &soft_off          &kp LEFT     &kp DOWN        &kp RIGHT        &kp RIGHT            &kp LA(ENTER)
+&kp LEFT_SHIFT    &kp F8  &kp F9  &kp F10  &kp F11  &kp F12  &trans    &trans  &shutdown_windows  &kp END      &kp LEFT_BRACE  &kp RIGHT_BRACE  &kp RBKT             &sk RIGHT_SHIFT
+                                  &trans   &trans   &mo 3    &trans    &trans  &trans             &bootloader  &sys_reset
             >;
         };
 
         third {
             bindings = <
-&trans  &kp F1  &kp F2  &kp F3       &kp F4      &kp F5                    &kp F6  &kp F7      &kp F8       &kp F9  &kp F10           &kp F11
-&trans  &trans  &trans  &trans       &trans      &trans                    &trans  &trans      &trans       &trans  &kp LEFT_BRACKET  &kp RIGHT_BRACKET
-&trans  &trans  &trans  &trans       &trans      &trans                    &trans  &trans      &trans       &trans  &trans            &kp BACKSLASH
-&trans  &trans  &trans  &trans       &trans      &trans  &trans    &trans  &trans  &trans      &trans       &trans  &trans            &trans
+&trans  &kp F1  &kp F2  &kp F3       &kp F4      &kp F5                    &kp F6  &kp F7      &kp F8          &kp F9           &kp F10        &kp F11
+&trans  &trans  &trans  &trans       &trans      &trans                    &trans  &trans      &trans          &trans           &kp F12        &kp DELETE
+&trans  &trans  &trans  &trans       &trans      &trans                    &kp F5  &kp F4      &kp F3          &kp F2           &kp F1         &kp BACKSLASH
+&trans  &trans  &trans  &trans       &trans      &trans  &trans    &trans  &trans  &trans      &kp LEFT_BRACE  &kp RIGHT_BRACE  &kp BACKSLASH  &sk RIGHT_SHIFT
                         &bootloader  &sys_reset  &trans  &trans    &trans  &trans  &sys_reset  &bootloader
             >;
+
+            label = "third";
+        };
+
+        taipo {
+            bindings = <
+&trans  &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans
+&trans  &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans
+&trans  &kp R   &kp S   &kp N   &kp I   &trans                    &trans  &kp I   &kp N   &kp S   &kp R   &trans
+&trans  &kp A   &kp O   &kp T   &kp E   &trans  &trans    &trans  &trans  &kp E   &kp T   &kp O   &kp A   &trans
+                        &trans  &trans  &trans  &trans    &trans  &mo 5   &trans  &trans
+            >;
+
+            label = "taipo";
+        };
+
+        taipo_layer1 {
+            bindings = <
+&trans  &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans
+&trans  &trans  &trans  &trans  &trans  &trans                    &to 0   &trans  &trans  &trans  &trans  &trans
+&trans  &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans
+&trans  &trans  &trans  &trans  &trans  &trans  &trans    &trans  &trans  &trans  &trans  &trans  &trans  &trans
+                        &trans  &trans  &trans  &trans    &trans  &trans  &trans  &trans
+            >;
+
+            label = "taipo layer1";
+        };
+
+        reverse {
+            bindings = <
+&trans  &trans  &trans  &trans  &trans  &trans                    &mt F5 N5  &mt F4 NUMBER_4  &mt N3 NUMBER_3  &mt F2 NUMBER_2  &mt F1 NUMBER_1  &mt LA(LC(DELETE)) ESCAPE
+&trans  &trans  &trans  &trans  &trans  &trans                    &kp T      &kp R            &kp E            &kp W            &kp Q            &kp TAB
+&trans  &trans  &trans  &trans  &trans  &trans                    &kp G      &kp F            &kp D            &kp S            &kp A            &sk LCTRL
+&trans  &trans  &trans  &trans  &trans  &trans  &trans    &trans  &kp B      &kp V            &kp C            &kp X            &kp Z            &sk LSHFT
+                        &trans  &trans  &trans  &trans    &trans  &sk LALT   &trans           &sk LEFT_GUI
+            >;
+
+            label = "reverse";
+        };
+
+        control {
+            bindings = <
+&kp LC(ESCAPE)    &kp LC(NUMBER_1)  &kp LC(NUMBER_2)  &kp LC(NUMBER_3)  &kp LC(NUMBER_4)  &kp LC(N5)                    &kp LC(F5)    &kp LA(F4)    &kp LS(UP_ARROW)  &kp RS(RIGHT)  &kp EQUAL  &kp BACKSLASH
+&kp LC(TAB)       &kp LC(Q)         &kp LC(E)         &kp LC(W)         &kp LC(R)         &kp LC(T)                     &kp RC(F5)    &kp RS(LEFT)  &kp RS(DOWN)      &kp LS(RIGHT)  &kt LG(P)  &kp LA(TAB)
+&kp LEFT_CONTROL  &kp LC(A)         &kp LC(S)         &kp LC(D)         &kp LC(F)         &kp LC(G)                     &kp LS(HOME)  &kp LC(F)     &kp LG(D)         &kp LG(LS(S))  &kp RC(A)  &kp LC(ENTER)
+&kp LEFT_SHIFT    &kp RC(Z)         &kp LC(X)         &kp LC(C)         &kp LC(V)         &kp LC(B)   &trans    &trans  &kp RS(END)   &kp LC(V)     &kp LC(C)         &kp LG(X)      &kp LC(Z)  &sk LG(LEFT_SHIFT)
+                                                      &kp LC(LEFT_ALT)  &trans            &trans      &trans    &trans  &trans        &trans        &trans
+            >;
+
+            label = "control";
         };
     };
 };
