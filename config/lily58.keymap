@@ -48,6 +48,12 @@
             key-positions = <25 28>;
             layers = <0>;
         };
+
+        combo_delete {
+            bindings = <&kp DEL>;
+            key-positions = <31 23>;
+            layers = <0>;
+        };
     };
 
     behaviors {
@@ -74,7 +80,7 @@
 
             bindings = <
 &kp ESC          &mt F1 NUMBER_1  &mt F2 NUMBER_2  &mt F3 NUMBER_3  &mt F4 NUMBER_4  &mt F5 N5                           &mt F6 NUMBER_6  &mt F7 N7         &mt F8 NUMBER_8           &mt F9 N9               &mt F10 NUMBER_0     &mt EQUAL MINUS
-&mt LA(TAB) TAB  &kp Q            &kp W            &kp E            &kp R            &kp T                               &kp Y            &mt HOME U        &mt UP_ARROW I            &kp O                   &mt LG(P) P          &backspace_delete
+&mt LA(TAB) TAB  &kp Q            &kp W            &kp E            &kp R            &kp T                               &kp Y            &mt HOME U        &mt UP_ARROW I            &kp O                   &mt LG(P) P          &kp BACKSPACE
 &kp LCTRL        &mt LC(A) A      &mt LC(S) S      &mt LG(D) D      &kp F            &kp G                               &kp H            &mt LEFT_ARROW J  &mt DOWN_ARROW K          &mt RIGHT L             &kp SEMI             &kp ENTER
 &kp LSHFT        &mt LC(Z) Z      &mt LC(X) X      &mt LC(C) C      &mt LC(V) V      &mt LC(B) B  &kp LBKT     &kp RBKT  &kp N            &mt END M         &mt LEFT_BRACE LESS_THAN  &mt RIGHT_BRACE PERIOD  &mt BACKSLASH SLASH  &kp RSHFT
                                                    &mt LALT LEFT    &kp LEFT_WIN     &lt 1 RIGHT  &kp SPACE    &kp RET   &lt 2 HOME       &lt 6 SPACE       &lt 7 END
