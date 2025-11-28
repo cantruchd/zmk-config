@@ -117,11 +117,11 @@
             //                     |      |      |      |        |  |       |      |       |       |
 
             bindings = <
-&trans            &trans  &trans  &trans   &trans   &trans                     &kp F6             &kp RC(F5)   &kp LA(F4)      &kp F3           &kp F2               &kp EQUAL
-&kp GRAVE         &kp N1  &kp N2  &kp N3   &kp N4   &kp N5                     &to 4              &kp HOME     &kp UP          &kp N9           &kp LA(PRINTSCREEN)  &kp DELETE
-&kp LEFT_CONTROL  &kp F2  &kp F3  &kp F4   &kp F5   &kp F6                     &soft_off          &kp LEFT     &kp DOWN        &kp RIGHT        &kp RIGHT            &kp LA(ENTER)
-&kp LEFT_SHIFT    &kp F8  &kp F9  &kp F10  &kp F11  &kp F12  &trans    &trans  &shutdown_windows  &kp END      &kp LEFT_BRACE  &kp RIGHT_BRACE  &kp RBKT             &sk RIGHT_SHIFT
-                                  &trans   &trans   &mo 3    &trans    &trans  &trans             &bootloader  &sys_reset
+&trans            &trans  &trans  &trans   &trans   &trans                     &bt BT_SEL 4       &bt BT_SEL 3  &bt BT_SEL 2    &bt BT_SEL 1     &bt BT_SEL 0         &kp EQUAL
+&kp GRAVE         &kp N1  &kp N2  &kp N3   &kp N4   &kp N5                     &to 4              &kp HOME      &kp UP          &kp N9           &kp LA(PRINTSCREEN)  &kp DELETE
+&kp LEFT_CONTROL  &kp F2  &kp F3  &kp F4   &kp F5   &kp F6                     &soft_off          &kp LEFT      &kp DOWN        &kp RIGHT        &kp RIGHT            &kp LA(ENTER)
+&kp LEFT_SHIFT    &kp F8  &kp F9  &kp F10  &kp F11  &kp F12  &trans    &trans  &shutdown_windows  &kp END       &kp LEFT_BRACE  &kp RIGHT_BRACE  &kp RBKT             &sk RIGHT_SHIFT
+                                  &trans   &trans   &mo 3    &trans    &trans  &trans             &bootloader   &bt BT_CLR
             >;
         };
 
