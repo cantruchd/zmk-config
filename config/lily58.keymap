@@ -108,11 +108,11 @@
             //                     |      |      |      |        |  |       |      |       |       |
 
             bindings = <
-&kp GRAVE   &bt BT_SEL 0             &bt BT_SEL 1     &bt BT_SEL 2       &bt BT_SEL 3     &bt BT_SEL 4                         &trans     &trans    &trans          &trans           &trans            &kp EQUAL
-&kp F1      &mkp MCLK                &msc SCRL_LEFT   &mmv MOVE_UP       &msc SCRL_UP     &msc SCRL_RIGHT                      &kp F7     &kp HOME  &kp UP_ARROW    &kp F10          &kp LEFT_BRACKET  &kp RIGHT_BRACKET
-&kp GRAVE   &mouse_and_layer 8 LCLK  &mmv MOVE_LEFT   &mmv MOVE_DOWN     &mmv MOVE_RIGHT  &mkp RCLK                            &kp CARET  &kp LEFT  &kp DOWN        &kp RIGHT        &kp RPAR          &kp SQT
-&bt BT_CLR  &soft_off                &msc SCRL_RIGHT  &ext_power EP_TOG  &msc SCRL_DOWN   &shutdown_windows  &trans    &trans  &trans     &kp END   &kp LEFT_BRACE  &kp RIGHT_BRACE  &kp PLUS          &kp BACKSLASH
-                                                      &kp SPACE          &bootloader      &trans             &trans    &trans  &mo 3      &trans    &trans
+&kp GRAVE   &bt BT_SEL 0  &bt BT_SEL 1     &bt BT_SEL 2       &bt BT_SEL 3     &bt BT_SEL 4                         &trans     &trans    &trans          &trans           &trans            &kp EQUAL
+&kp F1      &mkp MCLK     &msc SCRL_LEFT   &mmv MOVE_UP       &msc SCRL_UP     &msc SCRL_RIGHT                      &kp F7     &kp HOME  &kp UP_ARROW    &kp F10          &kp LEFT_BRACKET  &kp RIGHT_BRACKET
+&mo 8       &mkp LCLK     &mmv MOVE_LEFT   &mmv MOVE_DOWN     &mmv MOVE_RIGHT  &mkp RCLK                            &kp CARET  &kp LEFT  &kp DOWN        &kp RIGHT        &kp RPAR          &kp SQT
+&bt BT_CLR  &soft_off     &msc SCRL_RIGHT  &ext_power EP_TOG  &msc SCRL_DOWN   &shutdown_windows  &trans    &trans  &trans     &kp END   &kp LEFT_BRACE  &kp RIGHT_BRACE  &kp PLUS          &kp BACKSLASH
+                                           &kp SPACE          &bootloader      &trans             &trans    &trans  &mo 3      &trans    &trans
             >;
         };
 
@@ -195,7 +195,7 @@
             label = "control";
         };
 
-        layer_8 {
+        arrowleft {
             bindings = <
 &trans  &trans  &trans    &trans        &trans     &trans                    &trans  &trans  &trans  &trans  &trans  &trans
 &trans  &trans  &trans    &kp UP_ARROW  &kp HOME   &trans                    &trans  &trans  &trans  &trans  &trans  &trans
