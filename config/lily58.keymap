@@ -31,27 +31,27 @@
     combos {
         compatible = "zmk,combos";
 
-        combo_r {
-            bindings = <&kp LS(R)>;
-            key-positions = <51 25>;
-            layers = <4>;
-        };
-
-        r_right {
-            bindings = <&kp LS(R)>;
-            key-positions = <34 56>;
-            layers = <4>;
-        };
-
-        alt_f4 {
-            bindings = <&kp LA(F4)>;
-            key-positions = <25 28>;
+        combo_right {
+            bindings = <&kp RIGHT>;
+            key-positions = <28 27>;
             layers = <0>;
         };
 
-        combo_delete {
-            bindings = <&kp DEL>;
-            key-positions = <31 23>;
+        combo_left {
+            bindings = <&kp LEFT_ARROW>;
+            key-positions = <26 27>;
+            layers = <0>;
+        };
+
+        combo_down {
+            bindings = <&kp DOWN>;
+            key-positions = <26 27 28>;
+            layers = <0>;
+        };
+
+        combo_up {
+            bindings = <&kp UP_ARROW>;
+            key-positions = <28 15>;
             layers = <0>;
         };
     };
