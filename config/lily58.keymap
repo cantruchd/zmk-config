@@ -91,13 +91,13 @@
             layers = <0>;
         };
 
-        cb_home {
+        cb_home1 {
             bindings = <&kp HOME>;
             key-positions = <19 20>;
             layers = <0>;
         };
 
-        cb_end {
+        cb_end1 {
             bindings = <&kp END>;
             key-positions = <44 45>;
             layers = <0>;
