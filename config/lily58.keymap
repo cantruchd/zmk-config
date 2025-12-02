@@ -54,6 +54,54 @@
             key-positions = <28 15>;
             layers = <0>;
         };
+
+        cb_home {
+            bindings = <&kp HOME>;
+            key-positions = <16 17>;
+            layers = <0>;
+        };
+
+        cb_end {
+            bindings = <&kp END>;
+            key-positions = <40 41>;
+            layers = <0>;
+        };
+
+        cb_left {
+            bindings = <&kp LEFT>;
+            key-positions = <31 32>;
+            layers = <0>;
+        };
+
+        cb_right {
+            bindings = <&kp RIGHT>;
+            key-positions = <33 32>;
+            layers = <0>;
+        };
+
+        cb_down {
+            bindings = <&kp DOWN>;
+            key-positions = <32 33 31>;
+            layers = <0>;
+        };
+
+        cb_up {
+            bindings = <&kp UP_ARROW>;
+            key-positions = <31 20>;
+            layers = <0>;
+        };
+
+        cb_home {
+            bindings = <&kp HOME>;
+            key-positions = <19 20>;
+            layers = <0>;
+        };
+
+        cb_end {
+            bindings = <&kp END>;
+            key-positions = <44 45>;
+            layers = <0>;
+        };
     };
 
     behaviors {
