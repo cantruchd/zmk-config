@@ -57,13 +57,13 @@
 
         cb_home {
             bindings = <&kp HOME>;
-            key-positions = <16 17>;
+            key-positions = <16 15>;
             layers = <0>;
         };
 
         cb_end {
             bindings = <&kp END>;
-            key-positions = <40 41>;
+            key-positions = <40 39>;
             layers = <0>;
         };
 
@@ -99,7 +99,7 @@
 
         cb_end1 {
             bindings = <&kp END>;
-            key-positions = <44 45>;
+            key-positions = <45 46>;
             layers = <0>;
         };
     };
