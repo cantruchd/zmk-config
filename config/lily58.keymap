@@ -133,7 +133,7 @@
             compatible = "zmk,behavior-tap-dance";
             label = "S_WINS";
             #binding-cells = <0>;
-            bindings = <&mt LC(S) S>, <&mt LS(LG(S)) S>;
+            bindings = <&mt LC(S) S>, <&mt LS(LG(S)) LS(LG(S))>;
         };
     };
 
