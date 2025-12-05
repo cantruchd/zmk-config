@@ -131,13 +131,13 @@
 
         f11 {
             bindings = <&kp F11>;
-            key-positions = <1 2>;
+            key-positions = <2 3>;
             layers = <0>;
         };
 
         f12 {
             bindings = <&kp F12>;
-            key-positions = <2 3>;
+            key-positions = <3 4>;
             layers = <0>;
         };
 
