@@ -116,6 +116,12 @@
             key-positions = <33 34>;
             layers = <0>;
         };
+
+        indexquote {
+            bindings = <&kp SINGLE_QUOTE>;
+            key-positions = <35 31>;
+            layers = <0>;
+        };
     };
 
     behaviors {
