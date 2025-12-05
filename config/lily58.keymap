@@ -122,6 +122,12 @@
             key-positions = <35 31>;
             layers = <0>;
         };
+
+        thumbquote {
+            bindings = <&kp SINGLE_QUOTE>;
+            key-positions = <35 56>;
+            layers = <0>;
+        };
     };
 
     behaviors {
