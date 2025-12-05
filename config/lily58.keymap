@@ -199,7 +199,7 @@
 &mt LA(TAB) TAB   &kp Q            &kp W            &kp E            &kp R            &kp T                               &kp Y            &mt HOME U        &mt UP_ARROW I          &kp O                     &mt LG(P) P          &kp BACKSPACE
 &kp LCTRL         &mt LC(A) A      &mt LC(S) S      &mt LG(D) D      &kp F            &kp G                               &kp H            &mt LEFT_ARROW J  &mt DOWN_ARROW K        &mt RIGHT L               &kp SEMI             &mt APOSTROPHE ENTER
 &shift_capslock   &mt LC(Z) Z      &mt LC(X) X      &mt LC(C) C      &mt LC(V) V      &mt LC(B) B  &kp LBKT     &kp RBKT  &kp N            &mt END M         &mt LEFT_BRACKET COMMA  &mt RIGHT_BRACKET PERIOD  &mt BACKSLASH SLASH  &shift_capslock
-                                                    &mt LALT HOME    &kp LEFT_WIN     &lt 1 LEFT   &kp SPACE    &kp RET   &lt 2 RIGHT      &lt 6 SPACE       &lt 7 END
+                                                    &mt LALT HOME    &kp LEFT_WIN     &lt 1 LEFT   &kp SPACE    &kp RET   &lt 2 RIGHT      &lt 6 SPACE       &mt LEFT_CONTROL END
             >;
         };
 
