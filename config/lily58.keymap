@@ -109,6 +109,7 @@
             bindings = <&kp LS(RG(S))>;
             key-positions = <25 26>;
             layers = <0>;
+            require-prior-idle-ms = <500>;
         };
 
         cb_delete {
