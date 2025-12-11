@@ -162,7 +162,7 @@
 
         cb_ctrl_alt_delete {
             bindings = <&kp LA(LC(DELETE))>;
-            key-positions = <23 22 21>;
+            key-positions = <23 31>;
             layers = <0>;
         };
     };
