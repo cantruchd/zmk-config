@@ -159,6 +159,12 @@
             key-positions = <55 56 57>;
             layers = <0>;
         };
+
+        cb_ctrl_alt_delete {
+            bindings = <&kp LA(LC(DELETE))>;
+            key-positions = <23 22 21>;
+            layers = <0>;
+        };
     };
 
     behaviors {
