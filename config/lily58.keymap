@@ -308,8 +308,8 @@
         reverse {
             bindings = <
 &trans  &trans  &trans  &trans  &trans  &trans                    &mt F5 N5  &mt F4 NUMBER_4  &mt N3 NUMBER_3  &mt F2 NUMBER_2  &mt F1 NUMBER_1  &mt LA(LC(DELETE)) ESCAPE
-&trans  &trans  &trans  &trans  &trans  &trans                    &kp T      &kp R            &kp E            &kp W            &kp Q            &kp TAB
-&trans  &trans  &trans  &trans  &trans  &trans                    &kp G      &kp F            &mt LG(D) D      &mt LS(LG(S)) S  &mt LC(A) A      &sk LCTRL
+&trans  &trans  &trans  &trans  &trans  &trans                    &kp T      &kp R            &kp E            &kp W            &kp Q            &tabshifttab
+&trans  &trans  &trans  &trans  &trans  &trans                    &kp G      &mt LC(F) F      &mt LG(D) D      &mt LS(LG(S)) S  &mt LC(A) A      &sk LCTRL
 &trans  &trans  &trans  &trans  &trans  &trans  &trans    &trans  &kp B      &mt LC(V) V      &mt LC(C) C      &kp X            &kp Z            &sk LSHFT
                         &trans  &trans  &trans  &trans    &trans  &sk LALT   &trans           &sk LEFT_GUI
             >;
