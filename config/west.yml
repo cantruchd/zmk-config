@@ -18,12 +18,10 @@ manifest:
       revision: mainfromzmk #new entry
       # 2. KHAI BÁO MODULE WIDGET CUSTOM BẰNG URL CỤC BỘ (LƯU Ý: file://...)
     # Cách này giúp West thỏa mãn yêu cầu về URL/remote mà không cần remote ngoài
-    - name: nice_view_custom_widgets
-      # SỬ DỤNG 'url' với giao thức 'file://' 
-      # Trỏ đến thư mục hiện tại của repository (. - dấu chấm)
-      url: file://. 
-      path: app/nice_view_custom_widgets
-      # West cần revision cho mọi project, bạn có thể dùng một giá trị cố định hoặc revision của repo chính
-      revision: addtemp # Sử dụng revision của repo chính (nếu không rõ, dùng 'main')
+   - name: nice_view_custom_widgets
+      remote: local              # Gán cho remote 'local'
+      path: app/nice_view_custom_widgets 
+      # BỎ revision, url (West sẽ không cố gắng clone/fetch)
+      #
   self:
     path: config
