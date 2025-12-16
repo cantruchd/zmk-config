@@ -1,0 +1,13 @@
+# File: config/boards/shields/nice_view/Kconfig.defconfig
+
+if SHIELD_NICE_VIEW || SHIELD_NICE_VIEW_ADAPTER
+
+config ZMK_WIDGET_TEMPERATURE
+    bool "Enable temperature display on nice_view"
+    select SENSOR
+    select TEMP_NRF5
+    help
+      Enable temperature sensor reading and display on nice_view.
+      Temperature will replace the random art (balloon/mountain).
+
+endif
