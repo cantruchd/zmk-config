@@ -16,6 +16,11 @@ manifest:
       remote: cantruchd
       import: app/west.yml
       revision: mainfromzmk #new entry
+      # 2. KHAI BÁO MODULE WIDGET CUSTOM CỦA BẠN (QUAN TRỌNG NHẤT)
+    # Tên của project này KHÔNG CẦN phải có remote, vì nó nằm cục bộ trong thư mục 'app/'
+    - name: nice_view_custom_widgets
+      path: app/nice_view_custom_widgets # Đường dẫn phải khớp với thư mục bạn đã tạo
+      # Không cần remote hoặc revision nếu nó nằm trong cùng repository
     # - name: nice-view-gem #new entry
     #   remote: cantruchd #new entry
     #   revision: main #new entry
