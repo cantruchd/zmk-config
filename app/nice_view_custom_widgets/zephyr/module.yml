@@ -1,0 +1,5 @@
+name: nice_view_custom_widgets
+build:
+  # Nếu bạn có file Kconfig, khai báo ở đây
+  kconfig: Kconfig
+  # cmake: CMakeLists.txt (Mặc định nó tự tìm CMakeLists.txt cùng cấp)
