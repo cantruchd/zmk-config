@@ -1,29 +1,18 @@
 manifest:
   defaults:
-    revision: v0.3
+    revision: main
   
   remotes:
-    # Remote fork của bạn
+    - name: zmkfirmware
+      url-base: https://github.com/zmkfirmware
     - name: cantruchd
-      url-base: https://github.com/cantruchd
-    
-    # --- PHẦN QUAN TRỌNG CẦN THÊM ---
-    # Bạn phải định nghĩa remote tên là 'local' ở đây để bên dưới có thể gọi nó.
-    # Không cần url-base cho remote này.
-    - name: local
-    # --------------------------------
+      url-base: https://github.com/cantruchd 
 
   projects:
     - name: zmk
       remote: cantruchd
       import: app/west.yml
       revision: mainfromzmk
-
-    # Module custom của bạn
-    - name: nice_view_custom_widgets
-      remote: local              # Tham chiếu đến remote 'local' vừa tạo ở trên
-      path: app/nice_view_custom_widgets
-      # Không cần revision hay url ở đây vì ta đang dùng mẹo local remote
 
   self:
     path: config
