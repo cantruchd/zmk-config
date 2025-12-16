@@ -164,6 +164,12 @@
             key-positions = <23 31>;
             layers = <0>;
         };
+
+        cbwin_p {
+            bindings = <&kp LG(P)>;
+            key-positions = <31 22>;
+            layers = <0>;
+        };
     };
 
     behaviors {
