@@ -169,6 +169,7 @@
             bindings = <&kp LG(P)>;
             key-positions = <31 22>;
             layers = <0>;
+            require-prior-idle-ms = <125>;
         };
     };
 
