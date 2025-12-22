@@ -217,6 +217,7 @@
             label = "P_WIN_P";
             #binding-cells = <0>;
             bindings = <&kp P>, <&kp LG(P)>;
+
             require-prior-idle-ms = <125>;
         };
     };
@@ -236,7 +237,7 @@
 
             bindings = <
 &mt GRAVE ESCAPE  &mt F1 NUMBER_1  &mt F2 NUMBER_2  &mt F3 NUMBER_3  &mt F4 NUMBER_4  &mt F5 N5                           &mt F6 NUMBER_6  &mt F7 N7         &mt F8 NUMBER_8         &mt F9 N9                 &mt F10 NUMBER_0     &mt EQUAL MINUS
-&tabshifttab      &kp Q            &kp W            &kp E            &kp R            &kp T                               &kp Y            &mt HOME U        &mt UP_ARROW I          &kp O                     &p_win_p             &kp BACKSPACE
+&tabshifttab      &kp Q            &kp W            &kp E            &kp R            &kp T                               &kp Y            &mt HOME U        &mt UP_ARROW I          &kp O                     &kp P                &kp BACKSPACE
 &kp LCTRL         &mt LC(A) A      &mt LC(S) S      &mt LG(D) D      &kp F            &kp G                               &kp H            &mt LEFT_ARROW J  &mt DOWN_ARROW K        &mt RIGHT L               &kp SEMI             &mt APOSTROPHE ENTER
 &shift_capslock   &mt LC(Z) Z      &mt LC(X) X      &mt LC(C) C      &mt LC(V) V      &mt LC(B) B  &kp LBKT     &kp RBKT  &kp N            &mt END M         &mt LEFT_BRACKET COMMA  &mt RIGHT_BRACKET PERIOD  &mt BACKSLASH SLASH  &shift_capslock
                                                     &mt LALT HOME    &kp LEFT_WIN     &lt 1 LEFT   &kp SPACE    &kp RET   &lt 2 RIGHT      &lt 6 SPACE       &mt LEFT_CONTROL END
