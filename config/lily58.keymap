@@ -210,8 +210,6 @@
             label = "TABSHIFTTAB";
             #binding-cells = <0>;
             bindings = <&mt LA(TAB) TAB>, <&mt LS(LA(TAB)) LS(TAB)>;
-
-            tapping-term-ms = <300>;
         };
 
         p_win_p: p_win_p {
