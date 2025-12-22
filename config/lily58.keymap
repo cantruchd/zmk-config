@@ -211,15 +211,6 @@
             #binding-cells = <0>;
             bindings = <&mt LA(TAB) TAB>, <&mt LS(LA(TAB)) LS(TAB)>;
         };
-
-        p_win_p: p_win_p {
-            compatible = "zmk,behavior-tap-dance";
-            label = "P_WIN_P";
-            #binding-cells = <0>;
-            bindings = <&kp P>, <&kp LG(P)>;
-
-            require-prior-idle-ms = <125>;
-        };
     };
 
     keymap {
