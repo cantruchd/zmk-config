@@ -217,6 +217,7 @@
             label = "P_WIN_P";
             #binding-cells = <0>;
             bindings = <&kp P>, <&kp LG(P)>;
+            require-prior-idle-ms = <125>;
         };
     };
 
