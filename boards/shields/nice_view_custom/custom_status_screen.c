@@ -20,8 +20,8 @@ lv_obj_t *zmk_display_status_screen() {
     screen = lv_obj_create(NULL);
 
 #if IS_ENABLED(CONFIG_NICE_VIEW_WIDGET_STATUS)
-    zmk_widget_status_init(&status_widget, screen);
-    lv_obj_align(zmk_widget_status_obj(&status_widget), LV_ALIGN_TOP_LEFT, 0, 0);
+    zmk_widget_status_init_custom(&status_widget, screen);
+    lv_obj_align(zmk_widget_status_obj_custom(&status_widget), LV_ALIGN_TOP_LEFT, 0, 0);
 #endif
 
     return screen;
