@@ -9,7 +9,7 @@
 #include <zephyr/kernel.h>
 #include "util.h"
 // #include <zmk/app/boards/shields/nice_view/widgets/util.h>
-struct status_state {
+struct zmk_peripheral_status_state {
     uint8_t battery;
     bool charging;
     bool connected;
