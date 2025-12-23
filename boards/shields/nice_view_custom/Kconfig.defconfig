@@ -5,3 +5,10 @@ config ZMK_DISPLAY
 default y
 
 endif
+
+config ZMK_WIDGET_TEMPERATURE
+    bool "Temperature widget"
+    depends on ZMK_DISPLAY
+    default n
+    help
+      Enable the temperature widget on the custom status screen.
