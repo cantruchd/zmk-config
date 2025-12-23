@@ -1,3 +1,4 @@
+# zephyr/module.yml
 build:
   settings:
     board_root: .
