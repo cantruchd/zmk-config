@@ -241,7 +241,7 @@ ZMK_SUBSCRIPTION(widget_temperature, zmk_activity_state_changed);
 // WIDGET INITIALIZATION
 // ========================================
 
-int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
+int zmk_widget_status_init_custom(struct zmk_widget_status *widget, lv_obj_t *parent) {
     widget->obj = lv_obj_create(parent);
     lv_obj_set_size(widget->obj, 160, 68);
     
@@ -286,6 +286,6 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     return 0;
 }
 
-lv_obj_t *zmk_widget_status_obj(struct zmk_widget_status *widget) { 
+lv_obj_t *zmk_widget_status_obj_custom(struct zmk_widget_status *widget) { 
     return widget->obj; 
 }

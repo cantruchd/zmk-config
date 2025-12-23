@@ -1,0 +1,7 @@
+if SHIELD_NICE_VIEW_CUSTOM
+
+config ZMK_DISPLAY
+
+default y
+
+endif

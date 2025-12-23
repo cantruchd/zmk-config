@@ -1,6 +1,4 @@
-# File: zephyr/module.yml
-
 build:
-  cmake: .
   settings:
     board_root: .
+    shield_root: .

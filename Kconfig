@@ -1,7 +1,4 @@
-# File: Kconfig (root của zmk-config, không phải config/)
+# File: /Kconfig (Root của zmk-config)
 
-# Placeholder for module
-config ZMK_CONFIG_NICE_VIEW_CUSTOM
-    bool
-    default y if SHIELD_NICE_VIEW
-    default y if SHIELD_NICE_VIEW_ADAPTER
+# Trỏ ZMK vào folder chứa định nghĩa shield custom của bạn
+osource "config/boards/shields/nice_view_custom/Kconfig"

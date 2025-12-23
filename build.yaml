@@ -19,12 +19,12 @@
 ---
 include:
   - board: nice_nano_v2
-    shield: lily58_left nice_view_adapter nice_view #updated entry
+    shield: lily58_left nice_view_adapter nice_view_custom #updated entry
     snippet: studio-rpc-usb-uart
     #snippet: zmk-usb-logging
     
   - board: nice_nano_v2
-    shield: lily58_right nice_view_adapter nice_view #updated entry 
+    shield: lily58_right nice_view_adapter nice_view_custom #updated entry 
 
   - board: nice_nano_v2
     shield: settings_reset
