@@ -1,0 +1,7 @@
+# File: Kconfig (root của zmk-config, không phải config/)
+
+# Placeholder for module
+config ZMK_CONFIG_NICE_VIEW_CUSTOM
+    bool
+    default y if SHIELD_NICE_VIEW
+    default y if SHIELD_NICE_VIEW_ADAPTER
