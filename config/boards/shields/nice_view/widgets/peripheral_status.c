@@ -34,7 +34,7 @@ struct peripheral_status_state {
 // ========================================
 
 static void read_temperature(struct zmk_widget_status *widget) {
-// #if IS_ENABLED(CONFIG_ZMK_WIDGET_TEMPERATURE)
+#if IS_ENABLED(CONFIG_ZMK_WIDGET_TEMPERATURE)
     const struct device *dev = DEVICE_DT_GET_ONE(nordic_nrf_temp);
     
     if (!device_is_ready(dev)) {
@@ -54,7 +54,7 @@ static void read_temperature(struct zmk_widget_status *widget) {
     } else {
         LOG_WRN("Failed to fetch temperature: %d", rc);
     }
-// #endif
+#endif
 }
 
 static void temp_work_handler(struct k_work *work) {
@@ -215,7 +215,7 @@ ZMK_SUBSCRIPTION(widget_peripheral_status, zmk_split_peripheral_status_changed);
 // ACTIVITY STATE (để tắt timer khi idle)
 // ========================================
 
-// #if IS_ENABLED(CONFIG_ZMK_WIDGET_TEMPERATURE)
+#if IS_ENABLED(CONFIG_ZMK_WIDGET_TEMPERATURE)
 static int temperature_listener(const zmk_event_t *eh) {
     struct zmk_activity_state_changed *ev = as_zmk_activity_state_changed(eh);
     if (ev == NULL) {
@@ -235,7 +235,7 @@ static int temperature_listener(const zmk_event_t *eh) {
 
 ZMK_LISTENER(widget_temperature, temperature_listener);
 ZMK_SUBSCRIPTION(widget_temperature, zmk_activity_state_changed);
-// #endif
+#endif
 
 // ========================================
 // WIDGET INITIALIZATION
@@ -250,7 +250,7 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     lv_obj_align(top, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_canvas_set_buffer(top, widget->cbuf, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
 
-// #if IS_ENABLED(CONFIG_ZMK_WIDGET_TEMPERATURE)
+#if IS_ENABLED(CONFIG_ZMK_WIDGET_TEMPERATURE)
     // Temperature label bên trái (thay random art)
     lv_obj_t *temp_label = lv_label_create(widget->obj);
     lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_26, LV_PART_MAIN);
@@ -268,16 +268,16 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     k_timer_start(&temp_timer, K_SECONDS(5), K_SECONDS(30));
     
     LOG_INF("Temperature widget enabled");
-// #else
+#else
     // Fallback: Hiển thị random art như cũ nếu không enable temperature
-//     LV_IMG_DECLARE(balloon);
-//     LV_IMG_DECLARE(mountain);
+    LV_IMG_DECLARE(balloon);
+    LV_IMG_DECLARE(mountain);
     
-//     lv_obj_t *art = lv_img_create(widget->obj);
-//     bool random = sys_rand32_get() & 1;
-//     lv_img_set_src(art, random ? &balloon : &mountain);
-//     lv_obj_align(art, LV_ALIGN_TOP_LEFT, -48, 0);
-// #endif
+    lv_obj_t *art = lv_img_create(widget->obj);
+    bool random = sys_rand32_get() & 1;
+    lv_img_set_src(art, random ? &balloon : &mountain);
+    lv_obj_align(art, LV_ALIGN_TOP_LEFT, -48, 0);
+#endif
 
     sys_slist_append(&widgets, &widget->node);
     widget_battery_status_init();
