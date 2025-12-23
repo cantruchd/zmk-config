@@ -13,6 +13,9 @@ manifest:
       remote: cantruchd
       import: app/west.yml
       revision: mainfromzmk
+    - name: nice_view_gem
+      remote: cantruchd
+      revision: main
 
   self:
     path: config
