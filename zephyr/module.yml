@@ -1,4 +1,5 @@
 # zephyr/module.yml
+name: "zmk-shield-nice!view-custom"
 build:
   settings:
     board_root: .
