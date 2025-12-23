@@ -7,3 +7,7 @@ if (CONFIG_SHIELD_NICE_VIEW_CUSTOM)
         widgets/peripheral_status.c
     )
 endif()
+
+if(CONFIG_ZMK_DISPLAY AND CONFIG_NICE_VIEW_WIDGET_STATUS)
+  zephyr_library_include_directories(${CMAKE_SOURCE_DIR}/include)
+endif()
