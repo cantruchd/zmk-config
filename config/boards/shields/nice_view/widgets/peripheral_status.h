@@ -7,8 +7,8 @@
 
 #include <lvgl.h>
 #include <zephyr/kernel.h>
-// #include "util.h"
-#include <zmk/app/boards/shields/nice_view/widgets/util.h>
+#include "util.h"
+// #include <zmk/app/boards/shields/nice_view/widgets/util.h>
 struct status_state {
     uint8_t battery;
     bool charging;
