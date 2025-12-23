@@ -1,6 +1,0 @@
-// File: config/boards/shields/nice_view/nice_view.overlay
-// Enable temperature sensor for nice_view
-
-&temp {
-    status = "okay";
-};
