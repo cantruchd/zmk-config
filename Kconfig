@@ -1,4 +1,1 @@
-# File: /Kconfig (Root của zmk-config)
-
-# Trỏ ZMK vào folder chứa định nghĩa shield custom của bạn
-osource "config/boards/shields/nice_view_custom/Kconfig"
+osource "boards/shields/nice_view_custom/Kconfig"
