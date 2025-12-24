@@ -32,6 +32,9 @@ struct peripheral_status_state {
 // Temperature storage
 static int16_t current_temp = 0;
 
+// FORWARD DECLARATION
+static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state);
+
 // ========================================
 // TEMPERATURE SENSOR
 // ========================================
@@ -110,7 +113,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     snprintf(battery_text, sizeof(battery_text), "%d%%", state->battery);
     lv_canvas_draw_text(canvas, 0, 20, 68, &label_dsc_battery, battery_text);
 
-    // VẼ TEMPERATURE - BÊN TRÁI
+    // VẼ TEMPERATURE - BÊN TRÁI DƯỚI
     char temp_text[16];
     if (current_temp > 0) {
         snprintf(temp_text, sizeof(temp_text), "%dC", current_temp);
@@ -225,8 +228,6 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     lv_obj_align(top, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_canvas_set_buffer(top, widget->cbuf, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
 
-    // KHÔNG TẠO random art nữa - temperature sẽ vẽ trên canvas
-    
     // Read initial temperature
     read_temperature();
     
