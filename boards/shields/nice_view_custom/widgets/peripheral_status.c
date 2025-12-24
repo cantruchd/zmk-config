@@ -256,7 +256,7 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_26, LV_PART_MAIN);
     lv_obj_set_style_text_color(temp_label, lv_color_white(), LV_PART_MAIN);
     lv_label_set_text(temp_label, "--°C");
-    lv_obj_align(temp_label, LV_ALIGN_LEFT_MID, 10, 0);
+    lv_obj_align(temp_label, LV_ALIGN_TOP_LEFT, -48, 0);
     
     // Init state
     widget->state.temperature = 0;
