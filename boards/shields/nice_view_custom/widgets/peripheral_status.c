@@ -35,7 +35,7 @@ struct peripheral_status_state {
 };
 
 
-
+char logtext[10];
 
 
 
@@ -65,6 +65,7 @@ static void read_battery_voltage(void) {
     
     if (!device_is_ready(battery)) {
         LOG_WRN("Battery sensor not ready");
+        sprintf(logtext, "Bat N/A");
         current_voltage_mv = 0;
         return;
     }
@@ -82,9 +83,11 @@ static void read_battery_voltage(void) {
             LOG_INF("Battery voltage: %d mV", current_voltage_mv);
         } else {
             LOG_WRN("Failed to get voltage channel: %d", rc);
+            sprintf(logtext, "Bat Err");
         }
     } else {
         LOG_WRN("Failed to fetch battery sensor: %d", rc);
+        sprintf(logtext, "no sensor");
     }
 }
 
@@ -166,7 +169,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
                  current_voltage_mv / 1000, 
                  (current_voltage_mv % 1000) / 100);
     } else {
-        snprintf(v_text, sizeof(v_text), "-.-V");
+        snprintf(v_text, sizeof(v_text), logtext);
     }
     
     lv_canvas_draw_text(canvas, 0, 24, MIDDLE_WIDTH, &label_dsc_v, v_text);
