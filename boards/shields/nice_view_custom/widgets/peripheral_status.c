@@ -48,7 +48,36 @@ static lv_color_t middle_cbuf[MIDDLE_WIDTH * MIDDLE_HEIGHT];
 static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state);
 static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[]); // Hàm vẽ voltage mới
 
+static uint16_t current_voltage_mv = 0;
 
+static void read_battery_voltage(void) {
+    // Get battery sensor from devicetree chosen node
+    const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
+    
+    if (!device_is_ready(battery)) {
+        LOG_WRN("Battery sensor not ready");
+        current_voltage_mv = 0;
+        return;
+    }
+
+    struct sensor_value voltage;
+    int rc = sensor_sample_fetch(battery);
+    if (rc == 0) {
+        // Lấy SENSOR_CHAN_VOLTAGE
+        rc = sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage);
+        if (rc == 0) {
+            // Chuyển đổi sang mV
+            // voltage.val1 = volts (integer part)
+            // voltage.val2 = microvolts (fractional part * 1,000,000)
+            current_voltage_mv = voltage.val1 * 1000 + voltage.val2 / 1000;
+            LOG_INF("Battery voltage: %d mV", current_voltage_mv);
+        } else {
+            LOG_WRN("Failed to get voltage channel: %d", rc);
+        }
+    } else {
+        LOG_WRN("Failed to fetch battery sensor: %d", rc);
+    }
+}
 
 // ========================================
 // TEMPERATURE SENSOR
@@ -81,7 +110,7 @@ static void read_temperature(void) {
 
 static void temp_work_handler(struct k_work *work) {
     read_temperature();
-    
+    read_battery_voltage()
     struct zmk_widget_status *widget;
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
         draw_top(widget->obj, widget->cbuf, &widget->state);
@@ -108,36 +137,7 @@ K_TIMER_DEFINE(temp_timer, temp_timer_handler, NULL);
 // ĐỌC VOLTAGE TỪ ZMK BATTERY SENSOR
 // ========================================
 
-static uint16_t current_voltage_mv = 0;
 
-static void read_battery_voltage(void) {
-    // Get battery sensor from devicetree chosen node
-    const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
-    
-    if (!device_is_ready(battery)) {
-        LOG_WRN("Battery sensor not ready");
-        current_voltage_mv = 0;
-        return;
-    }
-
-    struct sensor_value voltage;
-    int rc = sensor_sample_fetch(battery);
-    if (rc == 0) {
-        // Lấy SENSOR_CHAN_VOLTAGE
-        rc = sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage);
-        if (rc == 0) {
-            // Chuyển đổi sang mV
-            // voltage.val1 = volts (integer part)
-            // voltage.val2 = microvolts (fractional part * 1,000,000)
-            current_voltage_mv = voltage.val1 * 1000 + voltage.val2 / 1000;
-            LOG_INF("Battery voltage: %d mV", current_voltage_mv);
-        } else {
-            LOG_WRN("Failed to get voltage channel: %d", rc);
-        }
-    } else {
-        LOG_WRN("Failed to fetch battery sensor: %d", rc);
-    }
-}
 
 static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     lv_draw_rect_dsc_t rect_black_dsc;
@@ -158,7 +158,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     }
     
     lv_canvas_draw_text(canvas, 0, 24, MIDDLE_WIDTH, &label_dsc_v, v_text);
-    rotate_canvas(canvas, cbuf);
+    //rotate_canvas(canvas, cbuf);
 }
 
 
