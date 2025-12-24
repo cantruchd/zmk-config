@@ -364,7 +364,7 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     // 3. Canvas Bottom (Bên Trái Dưới - 68x68) - Thay thế vị trí của ART
     lv_obj_t *bottom = lv_canvas_create(widget->obj);
         
-    lv_obj_align(bottom, LV_ALIGN_TOP_LEFT, -92, 0);
+    lv_obj_align(bottom, LV_ALIGN_TOP_LEFT, 92, 0);
 
     lv_canvas_set_buffer(bottom, bottom_cbuf, BOTTOM_WIDTH, BOTTOM_HEIGHT, LV_IMG_CF_TRUE_COLOR);
 
