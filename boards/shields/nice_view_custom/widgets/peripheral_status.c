@@ -34,6 +34,27 @@ struct peripheral_status_state {
     bool connected;
 };
 
+
+static void rotate_canvas_generic(lv_obj_t *canvas, lv_color_t cbuf[], uint16_t w, uint16_t h) {
+    size_t buf_size = w * h * sizeof(lv_color_t);
+    lv_color_t *temp_buf = (lv_color_t *)malloc(buf_size);
+    if (temp_buf == NULL) return;
+
+    memcpy(temp_buf, cbuf, buf_size);
+
+    for (uint16_t y = 0; y < h; y++) {
+        for (uint16_t x = 0; x < w; x++) {
+            // Công thức xoay 90 độ: (x, y) -> (h - 1 - y, x)
+            // Lưu ý: Sau khi xoay 90 độ, chiều rộng và chiều cao sẽ hoán đổi
+            // Nhưng vì màn hình nice!view vật lý đã xoay, ta cần map đúng pixel
+            cbuf[x + y * w] = temp_buf[(w - 1 - x) + (h - 1 - y) * w];
+        }
+    }
+    free(temp_buf);
+}
+
+
+
 // Lưu trữ cấu trúc sensor đầy đủ
 static struct sensor_value current_temp_val = {0};
 static bool temp_data_valid = false;
@@ -158,7 +179,8 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     }
     
     lv_canvas_draw_text(canvas, 0, 24, MIDDLE_WIDTH, &label_dsc_v, v_text);
-    //rotate_canvas(canvas, cbuf);
+    // Sử dụng hàm xoay tùy chỉnh cho kích thước 92x68
+    rotate_canvas_generic(canvas, cbuf, MIDDLE_WIDTH, MIDDLE_HEIGHT);
 }
 
 
