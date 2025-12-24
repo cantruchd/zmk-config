@@ -104,30 +104,61 @@ K_TIMER_DEFINE(temp_timer, temp_timer_handler, NULL);
 // NEW: DRAWING VOLTAGE (MIDDLE)
 // ========================================
 
-extern int zmk_battery_get_millivolts(void);
+// ========================================
+// ĐỌC VOLTAGE TỪ ZMK BATTERY SENSOR
+// ========================================
+
+static uint16_t current_voltage_mv = 0;
+
+static void read_battery_voltage(void) {
+    // Get battery sensor from devicetree chosen node
+    const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
+    
+    if (!device_is_ready(battery)) {
+        LOG_WRN("Battery sensor not ready");
+        current_voltage_mv = 0;
+        return;
+    }
+
+    struct sensor_value voltage;
+    int rc = sensor_sample_fetch(battery);
+    if (rc == 0) {
+        // Lấy SENSOR_CHAN_VOLTAGE
+        rc = sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage);
+        if (rc == 0) {
+            // Chuyển đổi sang mV
+            // voltage.val1 = volts (integer part)
+            // voltage.val2 = microvolts (fractional part * 1,000,000)
+            current_voltage_mv = voltage.val1 * 1000 + voltage.val2 / 1000;
+            LOG_INF("Battery voltage: %d mV", current_voltage_mv);
+        } else {
+            LOG_WRN("Failed to get voltage channel: %d", rc);
+        }
+    } else {
+        LOG_WRN("Failed to fetch battery sensor: %d", rc);
+    }
+}
 
 static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
-    // 1. Lấy voltage từ driver
-    //uint16_t v_mv = zmk_battery_voltage_mv(); 
-	uint16_t v_mv = zmk_battery_get_millivolts(); 
-    
     lv_draw_rect_dsc_t rect_black_dsc;
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
     
     lv_draw_label_dsc_t label_dsc_v;
     init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_20, LV_TEXT_ALIGN_CENTER);
 
-    // Xóa nền canvas middle
     lv_canvas_draw_rect(canvas, 0, 0, MIDDLE_WIDTH, MIDDLE_HEIGHT, &rect_black_dsc);
 
-    // Định dạng chuỗi Voltage: VD 3.8V
     char v_text[10];
-    // Chia lấy phần nguyên và 1 chữ số thập phân (không làm tròn)
-    snprintf(v_text, sizeof(v_text), "%d.%dV", v_mv / 1000, (v_mv % 1000) / 100);
-
-    // Vẽ chữ Voltage vào giữa canvas bên trái
-    // Tọa độ y=24 để căn giữa theo chiều dọc của 68px
+    if (current_voltage_mv > 0) {
+        snprintf(v_text, sizeof(v_text), "%d.%dV", 
+                 current_voltage_mv / 1000, 
+                 (current_voltage_mv % 1000) / 100);
+    } else {
+        snprintf(v_text, sizeof(v_text), "-.-V");
+    }
+    
     lv_canvas_draw_text(canvas, 0, 24, MIDDLE_WIDTH, &label_dsc_v, v_text);
+    rotate_canvas(canvas, cbuf);
 }
 
 
