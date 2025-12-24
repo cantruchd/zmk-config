@@ -9,7 +9,7 @@
 #include <zephyr/kernel.h>
 #include "util.h"
 // #include <zmk/app/boards/shields/nice_view/widgets/util.h>
-struct zmk_peripheral_status_state {
+struct status_state {
     uint8_t battery;
     bool charging;
     bool connected;
@@ -20,7 +20,7 @@ struct zmk_widget_status {
     sys_snode_t node;
     lv_obj_t *obj;
     lv_color_t cbuf[CANVAS_SIZE * CANVAS_SIZE];
-    struct zmk_peripheral_status_state  state;
+    struct status_state  state;
 };
 
 int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent);
