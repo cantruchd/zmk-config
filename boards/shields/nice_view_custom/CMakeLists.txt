@@ -2,8 +2,6 @@
 
 if (CONFIG_SHIELD_NICE_VIEW_CUSTOM)
 	zephyr_library_include_directories(${CMAKE_SOURCE_DIR}/include)
-    # 1. Tạo thư viện riêng cho shield này
-    zephyr_library()
 
     # 2. Chỉ định thư mục chứa các file .h (header) của bạn
     zephyr_library_include_directories(widgets)
