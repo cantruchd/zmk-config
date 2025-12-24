@@ -331,7 +331,7 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
 	// 2. Canvas Middle (Bên Trái - 92x68) - Thay thế vị trí của ART
     lv_obj_t *middle = lv_canvas_create(widget->obj);
         
-    lv_obj_align(middle, LV_ALIGN_TOP_LEFT, 0, -24);
+    lv_obj_align(middle, LV_ALIGN_TOP_LEFT, -24, 0); // Dịch trái 24px để căn giữa
 
     lv_canvas_set_buffer(middle, middle_cbuf, MIDDLE_WIDTH, MIDDLE_HEIGHT, LV_IMG_CF_TRUE_COLOR);
 
