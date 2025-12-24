@@ -182,7 +182,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     
     lv_canvas_draw_text(canvas, 0, 24, MIDDLE_WIDTH, &label_dsc_v, v_text);
     // Sử dụng hàm xoay tùy chỉnh cho kích thước 92x68
-    rotate_canvas_generic(canvas, cbuf, MIDDLE_WIDTH, MIDDLE_HEIGHT);
+    //rotate_canvas_generic(canvas, cbuf, MIDDLE_WIDTH, MIDDLE_HEIGHT);
 }
 
 
