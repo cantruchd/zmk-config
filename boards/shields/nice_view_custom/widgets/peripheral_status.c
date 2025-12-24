@@ -8,6 +8,7 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/logging/log.h>
+#include <stdlib.h> // Để dùng hàm abs()
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -23,6 +24,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/ble.h>
 
 #include "peripheral_status.h"
+
 LV_IMG_DECLARE(balloon);
 LV_IMG_DECLARE(mountain);
 static sys_slist_t widgets = SYS_SLIST_STATIC_INIT(&widgets);
@@ -31,8 +33,9 @@ struct peripheral_status_state {
     bool connected;
 };
 
-// Temperature storage
-static int16_t current_temp = 0;
+// Lưu trữ cấu trúc sensor đầy đủ
+static struct sensor_value current_temp_val = {0};
+static bool temp_data_valid = false;
 
 // FORWARD DECLARATION
 static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state);
@@ -46,7 +49,7 @@ static void read_temperature(void) {
     
     if (!device_is_ready(dev)) {
         LOG_WRN("Temperature sensor not ready");
-        current_temp = 0;
+        temp_data_valid = false;
         return;
     }
 
@@ -55,18 +58,20 @@ static void read_temperature(void) {
     if (rc == 0) {
         rc = sensor_channel_get(dev, SENSOR_CHAN_DIE_TEMP, &temp_val);
         if (rc == 0) {
-            current_temp = temp_val.val1;
-            LOG_INF("Temperature: %d°C", current_temp);
+            current_temp_val = temp_val;
+            temp_data_valid = true;
+            // Log với 2 chữ số thập phân để kiểm tra
+            LOG_INF("Temperature: %d.%02d°C", temp_val.val1, abs(temp_val.val2 / 10000));
         }
     } else {
         LOG_WRN("Failed to fetch temperature: %d", rc);
+        temp_data_valid = false;
     }
 }
 
 static void temp_work_handler(struct k_work *work) {
     read_temperature();
     
-    // Redraw all widgets
     struct zmk_widget_status *widget;
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
         draw_top(widget->obj, widget->cbuf, &widget->state);
@@ -82,7 +87,7 @@ static void temp_timer_handler(struct k_timer *timer) {
 K_TIMER_DEFINE(temp_timer, temp_timer_handler, NULL);
 
 // ========================================
-// DRAWING FUNCTION - VẼ TẤT CẢ
+// DRAWING FUNCTION
 // ========================================
 
 static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
@@ -95,38 +100,39 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     init_label_dsc(&label_dsc_battery, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_CENTER);
     
     lv_draw_label_dsc_t label_dsc_temp;
-    init_label_dsc(&label_dsc_temp, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_CENTER);
+    // Có thể cần hạ size font xuống một chút nếu text quá dài (ví dụ Montserrat 20)
+    init_label_dsc(&label_dsc_temp, LVGL_FOREGROUND, &lv_font_montserrat_20, LV_TEXT_ALIGN_CENTER);
     
     lv_draw_rect_dsc_t rect_black_dsc;
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
 
-    // Fill background
     lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
 
-    // Draw battery icon
     draw_battery(canvas, state);
 
-    // Draw WiFi icon
     lv_canvas_draw_text(canvas, 0, 0, CANVAS_SIZE, &label_dsc,
                         state->connected ? LV_SYMBOL_WIFI : LV_SYMBOL_CLOSE);
 
-    // Draw battery percentage
     char battery_text[5] = {};
     snprintf(battery_text, sizeof(battery_text), "%d%%", state->battery);
     lv_canvas_draw_text(canvas, 0, 17, 68, &label_dsc_battery, battery_text);
 
-    // VẼ TEMPERATURE - BÊN TRÁI DƯỚI
+    // HIỂN THỊ TEMPERATURE 2 SỐ THẬP PHÂN
     char temp_text[16];
-    if (current_temp > 0) {
-        snprintf(temp_text, sizeof(temp_text), "%dC", current_temp);
+    if (temp_data_valid) {
+        // temp_val.val2 là phần triệu (10^-6), chia 10000 để lấy phần trăm (10^-2)
+        int fraction = abs(current_temp_val.val2 / 10000);
+        snprintf(temp_text, sizeof(temp_text), "%d.%02d°C", current_temp_val.val1, fraction);
     } else {
-        snprintf(temp_text, sizeof(temp_text), "--C");
+        snprintf(temp_text, sizeof(temp_text), "--.--°C");
     }
-    lv_canvas_draw_text(canvas, 0, 40, 68, &label_dsc_temp, temp_text);
+    // Tọa độ y=40 có thể cần căn chỉnh lại tùy theo font size
+    lv_canvas_draw_text(canvas, 0, 42, 68, &label_dsc_temp, temp_text);
 
-    // Rotate canvas
     rotate_canvas(canvas, cbuf);
 }
+
+
 
 // ========================================
 // BATTERY STATUS
