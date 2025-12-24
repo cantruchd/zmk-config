@@ -140,7 +140,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
 	
     // Tọa độ y=40 có thể cần căn chỉnh lại tùy theo font size
     lv_canvas_draw_text(canvas, 0, 42, 68, &label_dsc_temp, temp_text);
-	lv_canvas_draw_text(canvas, 0, 42, 68, &label_dsc_temp_label, "°");
+	//lv_canvas_draw_text(canvas, 0, 42, 68, &label_dsc_temp_label, "°");
     rotate_canvas(canvas, cbuf);
 }
 
