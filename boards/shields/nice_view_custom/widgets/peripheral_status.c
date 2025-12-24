@@ -333,8 +333,9 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     
     
     // Căn Middle dựa vào cạnh TRÁI của Top để không còn khoảng trống
-    lv_obj_align_to(middle, top, LV_ALIGN_OUT_LEFT_MID, 0, 0);
+    lv_obj_align_to(middle, top, LV_ALIGN_OUT_RIGHT_MID, 0, 0);
     
+    //lv_obj_align(middle, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_canvas_set_buffer(middle, middle_cbuf, MIDDLE_WIDTH, MIDDLE_HEIGHT, LV_IMG_CF_TRUE_COLOR);
 
 	// Vẽ dữ liệu ban đầu
