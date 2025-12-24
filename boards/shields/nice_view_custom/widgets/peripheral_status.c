@@ -100,8 +100,10 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     init_label_dsc(&label_dsc_battery, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_CENTER);
     
     lv_draw_label_dsc_t label_dsc_temp;
+	lv_draw_label_dsc_t label_dsc_temp_label;
     // Có thể cần hạ size font xuống một chút nếu text quá dài (ví dụ Montserrat 20)
-    init_label_dsc(&label_dsc_temp, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_CENTER);
+    init_label_dsc(&label_dsc_temp, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_LEFT);
+	init_label_dsc(&label_dsc_temp, LVGL_FOREGROUND, &lv_font_montserrat_16, LV_TEXT_ALIGN_RIGHT);
     
     lv_draw_rect_dsc_t rect_black_dsc;
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
@@ -126,17 +128,19 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
 
         // Xử lý dấu âm cho trường hợp đặc biệt -0.X độ
         if (current_temp_val.val1 == 0 && current_temp_val.val2 < 0) {
-            snprintf(temp_text, sizeof(temp_text), "-0.%d°", decimal);
+            snprintf(temp_text, sizeof(temp_text), "-0.%d", decimal);
         } else {
-            snprintf(temp_text, sizeof(temp_text), "%d.%d°", current_temp_val.val1, decimal);
+            snprintf(temp_text, sizeof(temp_text), "%d.%d", current_temp_val.val1, decimal);
         }
     } else {
         snprintf(temp_text, sizeof(temp_text), "--.-°");
     }
 	
+
+	
     // Tọa độ y=40 có thể cần căn chỉnh lại tùy theo font size
     lv_canvas_draw_text(canvas, 0, 42, 68, &label_dsc_temp, temp_text);
-
+	lv_canvas_draw_text(canvas, 0, 42, 68, &label_dsc_temp_label, "°");
     rotate_canvas(canvas, cbuf);
 }
 
