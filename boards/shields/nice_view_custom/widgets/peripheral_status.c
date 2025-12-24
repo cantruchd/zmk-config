@@ -180,7 +180,7 @@ static void draw_bottom(lv_obj_t *canvas, lv_color_t cbuf[]) {
     lv_draw_label_dsc_t label_dsc_v;
     init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_20, LV_TEXT_ALIGN_CENTER);
 
-    lv_canvas_draw_rect(canvas, 0, 0, MIDDLE_WIDTH, MIDDLE_HEIGHT, &rect_black_dsc);
+    lv_canvas_draw_rect(canvas, 0, 0, BOTTOM_WIDTH, BOTTOM_HEIGHT, &rect_black_dsc);
 
     char v_text[10];
     if (current_voltage_mv > 0) {
@@ -190,8 +190,8 @@ static void draw_bottom(lv_obj_t *canvas, lv_color_t cbuf[]) {
     } else {
         snprintf(v_text, sizeof(v_text), "----");
     }
-    
-    lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v, v_text);
+
+    lv_canvas_draw_text(canvas, 0, 0, BOTTOM_WIDTH, &label_dsc_v, v_text);
     rotate_canvas(canvas, cbuf);
 }
 
@@ -364,12 +364,14 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     // 3. Canvas Bottom (Bên Trái Dưới - 68x68) - Thay thế vị trí của ART
     lv_obj_t *bottom = lv_canvas_create(widget->obj);
         
-    lv_obj_align(bottom, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_align(bottom, LV_ALIGN_TOP_LEFT, -44, 0);
 
     lv_canvas_set_buffer(bottom, bottom_cbuf, BOTTOM_WIDTH, BOTTOM_HEIGHT, LV_IMG_CF_TRUE_COLOR);
 
 	// Vẽ dữ liệu ban đầu
     read_temperature();
+    read_battery_voltage();
+
     draw_top(widget->obj, widget->cbuf, &widget->state);
     draw_middle(middle, middle_cbuf);
     draw_bottom(bottom, bottom_cbuf);
