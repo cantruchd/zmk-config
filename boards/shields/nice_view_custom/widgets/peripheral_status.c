@@ -35,22 +35,7 @@ struct peripheral_status_state {
 };
 
 
-static void rotate_canvas_generic(lv_obj_t *canvas, lv_color_t cbuf[], uint16_t w, uint16_t h) {
-    // Tạo buffer tạm để tính toán, kích thước bằng đúng canvas
-    size_t total_pixels = w * h;
-    // Cấp phát tĩnh một mảng tạm để tránh dùng malloc gây crash RAM
-    static lv_color_t temp_buf[92 * 68]; 
-    
-    memcpy(temp_buf, cbuf, total_pixels * sizeof(lv_color_t));
 
-    for (uint16_t y = 0; y < h; y++) {
-        for (uint16_t x = 0; x < w; x++) {
-            // Công thức xoay 90 độ chuẩn:
-            // pixel (x, y) trong cbuf mới sẽ lấy từ vị trí tương ứng đã xoay trong temp_buf
-            cbuf[x + y * w] = temp_buf[y + (w - 1 - x) * h];
-        }
-    }
-}
 
 
 
@@ -60,7 +45,7 @@ static bool temp_data_valid = false;
 
 // Thêm buffer cho canvas middle (92x68)
 // Lưu ý: Nếu RAM bị thiếu, bạn có thể giảm kích thước buffer này xuống
-#define MIDDLE_WIDTH 92
+#define MIDDLE_WIDTH 68
 #define MIDDLE_HEIGHT 68
 static lv_color_t middle_cbuf[MIDDLE_WIDTH * MIDDLE_HEIGHT];
 
@@ -181,8 +166,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     }
     
     lv_canvas_draw_text(canvas, 0, 24, MIDDLE_WIDTH, &label_dsc_v, v_text);
-    // Sử dụng hàm xoay tùy chỉnh cho kích thước 92x68
-    //rotate_canvas_generic(canvas, cbuf, MIDDLE_WIDTH, MIDDLE_HEIGHT);
+    rotate_canvas(canvas, cbuf);
 }
 
 
