@@ -9,6 +9,7 @@
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/logging/log.h>
 #include <stdlib.h> // Để dùng hàm abs()
+#include <zmk/drivers/battery.h> // Thêm để dùng hàm lấy voltage
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
@@ -37,8 +38,17 @@ struct peripheral_status_state {
 static struct sensor_value current_temp_val = {0};
 static bool temp_data_valid = false;
 
+// Thêm buffer cho canvas middle (92x68)
+// Lưu ý: Nếu RAM bị thiếu, bạn có thể giảm kích thước buffer này xuống
+#define MIDDLE_WIDTH 92
+#define MIDDLE_HEIGHT 68
+static lv_color_t middle_cbuf[MIDDLE_WIDTH * MIDDLE_HEIGHT];
+
 // FORWARD DECLARATION
 static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state);
+static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[]); // Hàm vẽ voltage mới
+
+
 
 // ========================================
 // TEMPERATURE SENSOR
@@ -89,6 +99,34 @@ K_TIMER_DEFINE(temp_timer, temp_timer_handler, NULL);
 // ========================================
 // DRAWING FUNCTION
 // ========================================
+
+// ========================================
+// NEW: DRAWING VOLTAGE (MIDDLE)
+// ========================================
+
+static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
+    // 1. Lấy voltage từ driver
+    uint16_t v_mv = zmk_battery_voltage_mv(); 
+    
+    lv_draw_rect_dsc_t rect_black_dsc;
+    init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
+    
+    lv_draw_label_dsc_t label_dsc_v;
+    init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_20, LV_TEXT_ALIGN_CENTER);
+
+    // Xóa nền canvas middle
+    lv_canvas_draw_rect(canvas, 0, 0, MIDDLE_WIDTH, MIDDLE_HEIGHT, &rect_black_dsc);
+
+    // Định dạng chuỗi Voltage: VD 3.8V
+    char v_text[10];
+    // Chia lấy phần nguyên và 1 chữ số thập phân (không làm tròn)
+    snprintf(v_text, sizeof(v_text), "%d.%dV", v_mv / 1000, (v_mv % 1000) / 100);
+
+    // Vẽ chữ Voltage vào giữa canvas bên trái
+    // Tọa độ y=24 để căn giữa theo chiều dọc của 68px
+    lv_canvas_draw_text(canvas, 0, 24, MIDDLE_WIDTH, &label_dsc_v, v_text);
+}
+
 
 static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
     lv_obj_t *canvas = lv_obj_get_child(widget, 0);
@@ -247,18 +285,25 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     lv_obj_t *top = lv_canvas_create(widget->obj);
     lv_obj_align(top, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_canvas_set_buffer(top, widget->cbuf, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
+	
+	// 2. Canvas Middle (Bên Trái - 92x68) - Thay thế vị trí của ART
+    lv_obj_t *middle = lv_canvas_create(widget->obj);
+    lv_obj_align(middle, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_canvas_set_buffer(middle, middle_cbuf, MIDDLE_WIDTH, MIDDLE_HEIGHT, LV_IMG_CF_TRUE_COLOR);
 
-    // Read initial temperature
+	// Vẽ dữ liệu ban đầu
     read_temperature();
+    draw_top(widget->obj, widget->cbuf, &widget->state);
+    draw_middle(middle, middle_cbuf);
     
     // Start timer
     k_timer_start(&temp_timer, K_SECONDS(2), K_SECONDS(30));
 	LOG_INF("Temperature timer started");
 	
-	lv_obj_t *art = lv_img_create(widget->obj);
+	/* lv_obj_t *art = lv_img_create(widget->obj);
     bool random = sys_rand32_get() & 1;
     lv_img_set_src(art, random ? &balloon : &mountain);
-    lv_obj_align(art, LV_ALIGN_TOP_LEFT, -48, 0);
+    lv_obj_align(art, LV_ALIGN_TOP_LEFT, -48, 0); */
 	
     sys_slist_append(&widgets, &widget->node);
     widget_battery_status_init();
