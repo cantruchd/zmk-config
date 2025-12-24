@@ -9,7 +9,7 @@
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/logging/log.h>
 #include <stdlib.h> // Để dùng hàm abs()
-#include <zmk/drivers/battery.h> // Thêm để dùng hàm lấy voltage
+#include <zmk/battery.h> // Thêm để dùng hàm lấy voltage
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
