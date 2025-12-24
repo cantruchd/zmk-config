@@ -48,10 +48,14 @@ static bool temp_data_valid = false;
 #define MIDDLE_WIDTH 68
 #define MIDDLE_HEIGHT 68
 static lv_color_t middle_cbuf[MIDDLE_WIDTH * MIDDLE_HEIGHT];
-
+// Thêm buffer cho canvas bottom (68x68)
+#define BOTTOM_WIDTH 68
+#define BOTTOM_HEIGHT 68
+static lv_color_t bottom_cbuf[BOTTOM_WIDTH * BOTTOM_HEIGHT];
 // FORWARD DECLARATION
 static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state);
 static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[]); // Hàm vẽ voltage mới
+static void draw_bottom(lv_obj_t *widget, lv_color_t cbuf[]); // Hàm vẽ voltage mới
 
 static uint16_t current_voltage_mv = 0;
 
@@ -166,6 +170,28 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     }
     
     lv_canvas_draw_text(canvas, 0, 24, MIDDLE_WIDTH, &label_dsc_v, v_text);
+    rotate_canvas(canvas, cbuf);
+}
+
+static void draw_bottom(lv_obj_t *canvas, lv_color_t cbuf[]) {
+    lv_draw_rect_dsc_t rect_black_dsc;
+    init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
+    
+    lv_draw_label_dsc_t label_dsc_v;
+    init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_20, LV_TEXT_ALIGN_CENTER);
+
+    lv_canvas_draw_rect(canvas, 0, 0, MIDDLE_WIDTH, MIDDLE_HEIGHT, &rect_black_dsc);
+
+    char v_text[10];
+    if (current_voltage_mv > 0) {
+        snprintf(v_text, sizeof(v_text), "%d.%dV", 
+                 current_voltage_mv / 1000, 
+                 (current_voltage_mv % 1000) / 100);
+    } else {
+        snprintf(v_text, sizeof(v_text), "placeholder");
+    }
+    
+    lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v, v_text);
     rotate_canvas(canvas, cbuf);
 }
 
@@ -335,10 +361,18 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
 
     lv_canvas_set_buffer(middle, middle_cbuf, MIDDLE_WIDTH, MIDDLE_HEIGHT, LV_IMG_CF_TRUE_COLOR);
 
+    // 3. Canvas Bottom (Bên Trái Dưới - 68x68) - Thay thế vị trí của ART
+    lv_obj_t *bottom = lv_canvas_create(widget->obj);
+        
+    lv_obj_align(bottom, LV_ALIGN_TOP_LEFT, 92, 0);
+
+    lv_canvas_set_buffer(bottom, bottom_cbuf, BOTTOM_WIDTH, BOTTOM_HEIGHT, LV_IMG_CF_TRUE_COLOR);
+
 	// Vẽ dữ liệu ban đầu
     read_temperature();
     draw_top(widget->obj, widget->cbuf, &widget->state);
     draw_middle(middle, middle_cbuf);
+    draw_bottom(bottom, bottom_cbuf);
     
     // Start timer
     k_timer_start(&temp_timer, K_SECONDS(2), K_SECONDS(30));
