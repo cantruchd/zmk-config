@@ -66,3 +66,8 @@ config ZMK_WIDGET_TEMPERATURE
       Enable the temperature widget on the custom status screen.
 	  
 endif # SHIELD_NICE_VIEW_CUSTOM
+
+
+# Trong Kconfig.defconfig hoặc nice_view_custom.conf
+config ZMK_BATTERY_VOLTAGE_PROXY
+    default y

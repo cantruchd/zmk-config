@@ -106,7 +106,8 @@ K_TIMER_DEFINE(temp_timer, temp_timer_handler, NULL);
 
 static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     // 1. Lấy voltage từ driver
-    uint16_t v_mv = zmk_battery_voltage_mv(); 
+    //uint16_t v_mv = zmk_battery_voltage_mv(); 
+	uint16_t v_mv = zmk_battery_state_of_charge_mv(); 
     
     lv_draw_rect_dsc_t rect_black_dsc;
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
