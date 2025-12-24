@@ -233,8 +233,13 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     
     // Start timer
     k_timer_start(&temp_timer, K_SECONDS(2), K_SECONDS(30));
-    LOG_INF("Temperature timer started");
-
+	LOG_INF("Temperature timer started");
+	
+	lv_obj_t *art = lv_img_create(widget->obj);
+    bool random = sys_rand32_get() & 1;
+    lv_img_set_src(art, random ? &balloon : &mountain);
+    lv_obj_align(art, LV_ALIGN_TOP_LEFT, -48, 0);
+	
     sys_slist_append(&widgets, &widget->node);
     widget_battery_status_init();
     widget_peripheral_status_init();
