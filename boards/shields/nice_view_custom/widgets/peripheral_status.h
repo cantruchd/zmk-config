@@ -8,13 +8,7 @@
 #include <lvgl.h>
 #include <zephyr/kernel.h>
 #include "util.h"
-// #include <zmk/app/boards/shields/nice_view/widgets/util.h>
-struct status_state {
-    uint8_t battery;
-    bool charging;
-    bool connected;
-    int16_t temperature;  // ← THÊM: Nhiệt độ
-};
+
 
 struct zmk_widget_status {
     sys_snode_t node;

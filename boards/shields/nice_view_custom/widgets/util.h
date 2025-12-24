@@ -32,6 +32,7 @@ struct status_state {
     uint8_t wpm[10];
 #else
     bool connected;
+	int16_t temperature;  // ← THÊM: Nhiệt độ
 #endif
 };
 
