@@ -188,7 +188,7 @@ static void draw_bottom(lv_obj_t *canvas, lv_color_t cbuf[]) {
                  current_voltage_mv / 1000, 
                  (current_voltage_mv % 1000) / 100);
     } else {
-        snprintf(v_text, sizeof(v_text), "placeholder");
+        snprintf(v_text, sizeof(v_text), "----");
     }
     
     lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v, v_text);
@@ -364,7 +364,7 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     // 3. Canvas Bottom (Bên Trái Dưới - 68x68) - Thay thế vị trí của ART
     lv_obj_t *bottom = lv_canvas_create(widget->obj);
         
-    lv_obj_align(bottom, LV_ALIGN_TOP_LEFT, 92, 0);
+    lv_obj_align(bottom, LV_ALIGN_TOP_LEFT, -92, 0);
 
     lv_canvas_set_buffer(bottom, bottom_cbuf, BOTTOM_WIDTH, BOTTOM_HEIGHT, LV_IMG_CF_TRUE_COLOR);
 
