@@ -110,7 +110,7 @@ static void read_temperature(void) {
 
 static void temp_work_handler(struct k_work *work) {
     read_temperature();
-    read_battery_voltage()
+    read_battery_voltage();
     struct zmk_widget_status *widget;
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
         draw_top(widget->obj, widget->cbuf, &widget->state);
