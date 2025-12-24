@@ -36,21 +36,20 @@ struct peripheral_status_state {
 
 
 static void rotate_canvas_generic(lv_obj_t *canvas, lv_color_t cbuf[], uint16_t w, uint16_t h) {
-    size_t buf_size = w * h * sizeof(lv_color_t);
-    lv_color_t *temp_buf = (lv_color_t *)malloc(buf_size);
-    if (temp_buf == NULL) return;
-
-    memcpy(temp_buf, cbuf, buf_size);
+    // Tạo buffer tạm để tính toán, kích thước bằng đúng canvas
+    size_t total_pixels = w * h;
+    // Cấp phát tĩnh một mảng tạm để tránh dùng malloc gây crash RAM
+    static lv_color_t temp_buf[92 * 68]; 
+    
+    memcpy(temp_buf, cbuf, total_pixels * sizeof(lv_color_t));
 
     for (uint16_t y = 0; y < h; y++) {
         for (uint16_t x = 0; x < w; x++) {
-            // Công thức xoay 90 độ: (x, y) -> (h - 1 - y, x)
-            // Lưu ý: Sau khi xoay 90 độ, chiều rộng và chiều cao sẽ hoán đổi
-            // Nhưng vì màn hình nice!view vật lý đã xoay, ta cần map đúng pixel
-            cbuf[x + y * w] = temp_buf[(w - 1 - x) + (h - 1 - y) * w];
+            // Công thức xoay 90 độ chuẩn:
+            // pixel (x, y) trong cbuf mới sẽ lấy từ vị trí tương ứng đã xoay trong temp_buf
+            cbuf[x + y * w] = temp_buf[y + (w - 1 - x) * h];
         }
     }
-    free(temp_buf);
 }
 
 
