@@ -117,15 +117,23 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     snprintf(battery_text, sizeof(battery_text), "%d%%", state->battery);
     lv_canvas_draw_text(canvas, 0, 17, 68, &label_dsc_battery, battery_text);
 
-    // HIỂN THỊ TEMPERATURE 2 SỐ THẬP PHÂN
+    // HIỂN THỊ TEMPERATURE 1 SỐ THẬP PHÂN (KHÔNG LÀM TRÒN)
     char temp_text[16];
     if (temp_data_valid) {
-        // temp_val.val2 là phần triệu (10^-6), chia 10000 để lấy phần trăm (10^-2)
-        int fraction = abs(current_temp_val.val2 / 10000);
-        snprintf(temp_text, sizeof(temp_text), "%d.%02d°C", current_temp_val.val1, fraction);
+        // Lấy đúng chữ số đầu tiên sau dấu phẩy bằng cách chia cho 100,000
+        // Ví dụ: 750,000 / 100,000 = 7
+        int decimal = abs(current_temp_val.val2) / 100000;
+
+        // Xử lý dấu âm cho trường hợp đặc biệt -0.X độ
+        if (current_temp_val.val1 == 0 && current_temp_val.val2 < 0) {
+            snprintf(temp_text, sizeof(temp_text), "-0.%d°C", decimal);
+        } else {
+            snprintf(temp_text, sizeof(temp_text), "%d.%d°C", current_temp_val.val1, decimal);
+        }
     } else {
-        snprintf(temp_text, sizeof(temp_text), "--.--°C");
+        snprintf(temp_text, sizeof(temp_text), "--.-°C");
     }
+	
     // Tọa độ y=40 có thể cần căn chỉnh lại tùy theo font size
     lv_canvas_draw_text(canvas, 0, 42, 68, &label_dsc_temp, temp_text);
 
