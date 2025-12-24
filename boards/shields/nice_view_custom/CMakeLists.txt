@@ -1,6 +1,7 @@
 # boards/shields/nice_view_custom/CMakeLists.txt
 
 if (CONFIG_SHIELD_NICE_VIEW_CUSTOM)
+	zephyr_library_include_directories(${CMAKE_SOURCE_DIR}/include)
     # 1. Tạo thư viện riêng cho shield này
     zephyr_library()
 
