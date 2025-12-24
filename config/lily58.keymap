@@ -173,7 +173,7 @@
         };
 
         shift_tab {
-            bindings = <&kp LG(P)>;
+            bindings = <&kp LS(TAB)>;
             key-positions = <28 12>;
             require-prior-idle-ms = <125>;
             layers = <0>;
