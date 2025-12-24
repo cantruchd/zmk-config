@@ -135,6 +135,10 @@ static void temp_work_handler(struct k_work *work) {
     struct zmk_widget_status *widget;
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
         draw_top(widget->obj, widget->cbuf, &widget->state);
+        
+        // Vẽ phần bên trái (92x68) - Lấy child index 1
+        lv_obj_t *middle_canvas = lv_obj_get_child(widget->obj, 1);
+        draw_middle(middle_canvas, middle_cbuf);
     }
 }
 
