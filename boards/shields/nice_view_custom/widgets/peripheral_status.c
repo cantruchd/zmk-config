@@ -142,6 +142,7 @@ static void temp_work_handler(struct k_work *work) {
         // Vẽ phần bên trái (92x68) - Lấy child index 1
         lv_obj_t *middle_canvas = lv_obj_get_child(widget->obj, 1);
         draw_middle(middle_canvas, middle_cbuf);
+        draw_bottom(lv_obj_get_child(widget->obj, 2), bottom_cbuf);
     }
 }
 
