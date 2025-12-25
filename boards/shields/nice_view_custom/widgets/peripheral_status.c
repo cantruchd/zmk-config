@@ -178,9 +178,12 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
 
     char v_text[10];
     if (current_voltage_mv > 0) {
-        snprintf(v_text, sizeof(v_text), "%d.%dV", 
-                 current_voltage_mv / 1000, 
-                 (current_voltage_mv % 1000) / 100);
+     // 2 chữ số thập phân
+        // Ví dụ: 4200 mV -> 4.20V
+        // 3750 mV -> 3.75V
+        snprintf(v_text, sizeof(v_text), "%d.%02dV", 
+                 current_voltage_mv / 1000,           // Phần nguyên: 4200/1000 = 4
+                 (current_voltage_mv % 1000) / 10);   // Phần thập phân: (4200%1000)/10 = 20
     } else {
         snprintf(v_text, sizeof(v_text), logtext);
     }
