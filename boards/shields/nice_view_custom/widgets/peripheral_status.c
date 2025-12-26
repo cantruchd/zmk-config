@@ -172,17 +172,18 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     lv_draw_rect_dsc_t rect_black_dsc;
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
     
-    lv_draw_label_dsc_t label_dsc_v;
-    init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_CENTER);
-
+    lv_draw_label_dsc_t label_dsc_v, label_dsc_v_label;
+    init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_LEFT);
+    init_label_dsc(&label_dsc_v_label, LVGL_FOREGROUND, &lv_font_montserrat_16, LV_TEXT_ALIGN_RIGHT);
     lv_canvas_draw_rect(canvas, 0, 0, MIDDLE_WIDTH, MIDDLE_HEIGHT, &rect_black_dsc);
 
     char v_text[10];
+    char v_label[] = "V";
     if (current_voltage_mv > 0) {
      // 2 chữ số thập phân
-        // Ví dụ: 4200 mV -> 4.20V
+        // Ví dụ: 4200 mV -> 4.20Vi
         // 3750 mV -> 3.75V
-        snprintf(v_text, sizeof(v_text), "%d.%02dV", 
+        snprintf(v_text, sizeof(v_text), "%d.%02d", 
                  current_voltage_mv / 1000,           // Phần nguyên: 4200/1000 = 4
                  (current_voltage_mv % 1000) / 10);   // Phần thập phân: (4200%1000)/10 = 20
     } else {
@@ -190,6 +191,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     }
     
     lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v, v_text);
+    lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v_label, v_label);
     rotate_canvas(canvas, cbuf);
 }
 
