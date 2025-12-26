@@ -59,52 +59,57 @@ static void draw_bottom(lv_obj_t *widget, lv_color_t cbuf[]);
 
 static uint16_t current_voltage_mv = 0;
 
+// Biến static để ghi nhớ channel đúng sau lần dò đầu tiên
+static enum sensor_channel discovered_channel = SENSOR_CHAN_PRIV_START; // Giá trị mặc định chưa xác định
+
 static void read_battery_voltage(void) {
-     const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
+    const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
     
     if (!device_is_ready(battery)) {
         LOG_WRN("Battery sensor not ready");
-        sprintf(logtext, "N/A");
-        current_voltage_mv = 0;
+        return;
+    }
+
+    // 1. Lấy mẫu dữ liệu từ cảm biến (Fetch)
+    int rc = sensor_sample_fetch(battery);
+    if (rc != 0) {
+        LOG_WRN("Failed to fetch battery: %d", rc);
         return;
     }
 
     struct sensor_value voltage;
-    int rc = sensor_sample_fetch(battery);
-    if (rc != 0) {
-        LOG_WRN("Failed to fetch battery sensor: %d", rc);
-        sprintf(logtext, "FetchErr");
-        return;
-    }
-       
-    sprintf(logtext, "volt");
-    rc = sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage);
-    // THỬ CÁC CHANNEL KHÁC NHAU
-    // Option 1: SENSOR_CHAN_GAUGE_VOLTAGE (cho battery gauge)
-   
-    // Option 3: Nếu cả 2 fail, thử kênh mặc định
-    if (rc != 0) {
-        sprintf(logtext, "all");
-        rc = sensor_channel_get(battery, SENSOR_CHAN_ALL, &voltage);
-    }
-    
-    // Option 2: Nếu option 1 fail, thử SENSOR_CHAN_VOLTAGE
-    if (rc != 0) {
-        sprintf(logtext, "gauge");
-        rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_VOLTAGE, &voltage);
-    }
-    
 
-    
+    // 2. Nếu đã biết channel đúng, lấy trực tiếp luôn
+    if (discovered_channel != SENSOR_CHAN_PRIV_START) {
+        rc = sensor_channel_get(battery, discovered_channel, &voltage);
+    } 
+    // 3. Nếu chưa biết (lần đầu chạy), tiến hành dò tìm
+    else {
+        static const enum sensor_channel candidates[] = {
+            SENSOR_CHAN_VOLTAGE,
+            SENSOR_CHAN_GAUGE_VOLTAGE,
+            SENSOR_CHAN_ALL
+        };
+
+        for (int i = 0; i < ARRAY_SIZE(candidates); i++) {
+            rc = sensor_channel_get(battery, candidates[i], &voltage);
+            if (rc == 0) {
+                discovered_channel = candidates[i]; // Ghi nhớ channel này
+                sprintf(logtext, "Ch %d", i + 1); // Ghi log channel tìm được
+                break;
+            }
+        }
+    }
+
+    // 4. Xử lý kết quả cuối cùng
     if (rc == 0) {
-        // Chuyển đổi sang mV
-        current_voltage_mv = voltage.val1 * 1000 + voltage.val2 / 1000;
-        LOG_INF("Battery voltage: %d mV (val1=%d, val2=%d)", 
-                current_voltage_mv, voltage.val1, voltage.val2);
+        // Tính toán mV: val1 (Volts), val2 (Microvolts)
+        current_voltage_mv = (voltage.val1 * 1000) + (voltage.val2 / 1000);
         
+        // Chỉ log khi cần thiết để tránh tràn log buffer
+        LOG_INF("Voltage: %d mV", current_voltage_mv);
     } else {
-        LOG_ERR("All voltage channels failed: %d", rc);
-        sprintf(logtext, "ChErr");
+        LOG_ERR("No valid voltage channel found");
         current_voltage_mv = 0;
     }
 }
