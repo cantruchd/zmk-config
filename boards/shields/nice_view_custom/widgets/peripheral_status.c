@@ -76,17 +76,18 @@ static void read_battery_voltage(void) {
         sprintf(logtext, "FetchErr");
         return;
     }
-    
+       
+    sprintf(logtext, "volt");
+    rc = sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage);
     // THỬ CÁC CHANNEL KHÁC NHAU
     // Option 1: SENSOR_CHAN_GAUGE_VOLTAGE (cho battery gauge)
-    sprintf(logtext, "gauge");
-    rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_VOLTAGE, &voltage);
+   
     
     
     // Option 2: Nếu option 1 fail, thử SENSOR_CHAN_VOLTAGE
     if (rc != 0) {
-        sprintf(logtext, "volt");
-        rc = sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage);
+        sprintf(logtext, "gauge");
+        rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_VOLTAGE, &voltage);
     }
     
     // Option 3: Nếu cả 2 fail, thử kênh mặc định
