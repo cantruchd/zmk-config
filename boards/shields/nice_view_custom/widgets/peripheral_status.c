@@ -173,7 +173,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
     
     lv_draw_label_dsc_t label_dsc_v;
-    init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_20, LV_TEXT_ALIGN_CENTER);
+    init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_CENTER);
 
     lv_canvas_draw_rect(canvas, 0, 0, MIDDLE_WIDTH, MIDDLE_HEIGHT, &rect_black_dsc);
 
@@ -189,7 +189,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
         snprintf(v_text, sizeof(v_text), logtext);
     }
     
-    lv_canvas_draw_text(canvas, 0, 24, MIDDLE_WIDTH, &label_dsc_v, v_text);
+    lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v, v_text);
     rotate_canvas(canvas, cbuf);
 }
 
@@ -198,7 +198,7 @@ static void draw_bottom(lv_obj_t *canvas, lv_color_t cbuf[]) {
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
     
     lv_draw_label_dsc_t label_dsc_v;
-    init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_20, LV_TEXT_ALIGN_CENTER);
+    init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_CENTER);
 
     lv_canvas_draw_rect(canvas, 0, 0, BOTTOM_WIDTH, BOTTOM_HEIGHT, &rect_black_dsc);
 
