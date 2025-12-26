@@ -216,13 +216,7 @@ static void draw_bottom(lv_obj_t *canvas, lv_color_t cbuf[]) {
     lv_canvas_draw_rect(canvas, 0, 0, BOTTOM_WIDTH, BOTTOM_HEIGHT, &rect_black_dsc);
 
     char v_text[10];
-    if (current_voltage_mv > 0) {
-        snprintf(v_text, sizeof(v_text), "%d.%dV", 
-                 current_voltage_mv / 1000, 
-                 (current_voltage_mv % 1000) / 100);
-    } else {
-        snprintf(v_text, sizeof(v_text), "----");
-    }
+    sprintf(v_text, "%d", zmk_battery_state_of_charge_mv());
 
     lv_canvas_draw_text(canvas, 0, 0, BOTTOM_WIDTH, &label_dsc_v, logtext);
     rotate_canvas(canvas, cbuf);
