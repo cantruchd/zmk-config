@@ -178,7 +178,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     lv_canvas_draw_rect(canvas, 0, 0, MIDDLE_WIDTH, MIDDLE_HEIGHT, &rect_black_dsc);
 
     char v_text[10];
-    char v_label[] = "V";
+    char v_label[] = sprintf("%dV", current_voltage_mv % 10);
     if (current_voltage_mv > 0) {
      // 2 chữ số thập phân
         // Ví dụ: 4200 mV -> 4.20Vi
