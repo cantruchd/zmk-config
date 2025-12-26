@@ -82,7 +82,11 @@ static void read_battery_voltage(void) {
     // THỬ CÁC CHANNEL KHÁC NHAU
     // Option 1: SENSOR_CHAN_GAUGE_VOLTAGE (cho battery gauge)
    
-    
+    // Option 3: Nếu cả 2 fail, thử kênh mặc định
+    if (rc != 0) {
+        sprintf(logtext, "all");
+        rc = sensor_channel_get(battery, SENSOR_CHAN_ALL, &voltage);
+    }
     
     // Option 2: Nếu option 1 fail, thử SENSOR_CHAN_VOLTAGE
     if (rc != 0) {
@@ -90,11 +94,7 @@ static void read_battery_voltage(void) {
         rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_VOLTAGE, &voltage);
     }
     
-    // Option 3: Nếu cả 2 fail, thử kênh mặc định
-    if (rc != 0) {
-        sprintf(logtext, "all");
-        rc = sensor_channel_get(battery, SENSOR_CHAN_ALL, &voltage);
-    }
+
     
     if (rc == 0) {
         // Chuyển đổi sang mV
