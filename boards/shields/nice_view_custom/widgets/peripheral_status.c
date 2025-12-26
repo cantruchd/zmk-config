@@ -87,8 +87,8 @@ static void read_battery_voltage(void) {
     else {
         static const enum sensor_channel candidates[] = {
             SENSOR_CHAN_VOLTAGE,
-            SENSOR_CHAN_GAUGE_VOLTAGE,
-            SENSOR_CHAN_ALL
+            SENSOR_CHAN_ALL,
+            SENSOR_CHAN_GAUGE_VOLTAGE            
         };
 
         for (int i = 0; i < ARRAY_SIZE(candidates); i++) {
