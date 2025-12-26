@@ -79,15 +79,19 @@ static void read_battery_voltage(void) {
     
     // THỬ CÁC CHANNEL KHÁC NHAU
     // Option 1: SENSOR_CHAN_GAUGE_VOLTAGE (cho battery gauge)
+    sprintf(logtext, "gauge");
     rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_VOLTAGE, &voltage);
+    
     
     // Option 2: Nếu option 1 fail, thử SENSOR_CHAN_VOLTAGE
     if (rc != 0) {
+        sprintf(logtext, "volt");
         rc = sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage);
     }
     
     // Option 3: Nếu cả 2 fail, thử kênh mặc định
     if (rc != 0) {
+        sprintf(logtext, "all");
         rc = sensor_channel_get(battery, SENSOR_CHAN_ALL, &voltage);
     }
     
@@ -96,7 +100,7 @@ static void read_battery_voltage(void) {
         current_voltage_mv = voltage.val1 * 1000 + voltage.val2 / 1000;
         LOG_INF("Battery voltage: %d mV (val1=%d, val2=%d)", 
                 current_voltage_mv, voltage.val1, voltage.val2);
-        sprintf(logtext, "OK");
+        
     } else {
         LOG_ERR("All voltage channels failed: %d", rc);
         sprintf(logtext, "ChErr");
@@ -214,7 +218,7 @@ static void draw_bottom(lv_obj_t *canvas, lv_color_t cbuf[]) {
         snprintf(v_text, sizeof(v_text), "----");
     }
 
-    lv_canvas_draw_text(canvas, 0, 0, BOTTOM_WIDTH, &label_dsc_v, v_text);
+    lv_canvas_draw_text(canvas, 0, 0, BOTTOM_WIDTH, &label_dsc_v, logtext);
     rotate_canvas(canvas, cbuf);
 }
 
@@ -267,7 +271,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
 	
 
 	
-    // Tọa độ y=40 có thể cần căn chỉnh lại tùy theo font size
+    
     lv_canvas_draw_text(canvas, 0, 42, 68, &label_dsc_temp, temp_text);
 	lv_canvas_draw_text(canvas, 0, 42, 68, &label_dsc_temp_label, "°C");
     rotate_canvas(canvas, cbuf);
