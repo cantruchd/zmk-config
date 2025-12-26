@@ -174,12 +174,12 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     
     lv_draw_label_dsc_t label_dsc_v, label_dsc_v_label;
     init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_LEFT);
-    init_label_dsc(&label_dsc_v_label, LVGL_FOREGROUND, &lv_font_montserrat_16, LV_TEXT_ALIGN_RIGHT);
+    init_label_dsc(&label_dsc_v_label, LVGL_FOREGROUND, &lv_font_montserrat_18, LV_TEXT_ALIGN_RIGHT);
     lv_canvas_draw_rect(canvas, 0, 0, MIDDLE_WIDTH, MIDDLE_HEIGHT, &rect_black_dsc);
 
     char v_text[10];
     char v_label[10];
-    snprintf(v_label, sizeof(v_label), "%dV", (current_voltage_mv % 10) );
+    snprintf(v_label, sizeof(v_label), "%d", (current_voltage_mv % 10) );
     if (current_voltage_mv > 0) {
      // 2 chữ số thập phân
         // Ví dụ: 4200 mV -> 4.20Vi
