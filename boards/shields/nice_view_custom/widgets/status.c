@@ -358,7 +358,7 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
     //vẽ voltage bên dưới
     char v_text[10];
     
-    snprintf(v_label, sizeof(v_label), "%d", (current_voltage_mv % 10) );
+   
     if (current_voltage_mv > 0) {
      // 2 chữ số thập phân
         // Ví dụ: 4200 mV -> 4.20Vi
