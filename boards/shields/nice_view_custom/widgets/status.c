@@ -52,7 +52,7 @@ struct wpm_status_state {
 
 int max = 0;
 int min = 256;
-
+char logtext[10];
 
 static uint16_t current_voltage_mv = 0;
 
