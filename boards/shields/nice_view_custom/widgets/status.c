@@ -147,6 +147,9 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     lv_draw_line_dsc_t line_dsc;
     init_line_dsc(&line_dsc, LVGL_FOREGROUND, 1);
 
+    lv_draw_label_dsc_t label_dsc_temp_unit;
+    init_label_dsc(&label_dsc_temp_unit, LVGL_FOREGROUND, &lv_font_unscii_8, LV_TEXT_ALIGN_RIGHT);
+
 
     // Fill background
     lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
@@ -233,7 +236,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     // max_width=64: chiều rộng khung - 2px padding
     lv_canvas_draw_text(canvas, 0, 37, 68, &label_dsc_temp, temp_text);
 
-    lv_canvas_draw_text(canvas, 0, 50, 68, &label_dsc, "°C");
+    lv_canvas_draw_text(canvas, 0, 47, 68, &label_dsc, "°C");
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
