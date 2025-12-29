@@ -352,25 +352,7 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
                             (selected ? &label_dsc_black : &label_dsc), label);
     }
 
-    lv_draw_label_dsc_t label_dsc_volt;
-    init_label_dsc(&label_dsc_volt, LVGL_FOREGROUND, &lv_font_montserrat_14, LV_TEXT_ALIGN_CENTER);
-
-    //vẽ voltage bên dưới
-    char v_text[10];
     
-   
-    if (current_voltage_mv > 0) {
-     // 2 chữ số thập phân
-        // Ví dụ: 4200 mV -> 4.20Vi
-        // 3750 mV -> 3.75V
-        snprintf(v_text, sizeof(v_text), "%d.%03d", 
-                 current_voltage_mv / 1000,           // Phần nguyên: 4200/1000 = 4
-                 (current_voltage_mv % 1000));   
-    } else {
-        snprintf(v_text, sizeof(v_text), "---");
-    }
-
-    lv_canvas_draw_text(canvas, 0, 40, 68, &label_dsc_volt, v_text);
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
@@ -402,6 +384,27 @@ static void draw_bottom(lv_obj_t *widget, lv_color_t cbuf[], const struct status
     char battery_text[5] = {};
     snprintf(battery_text, sizeof(battery_text), "%d%%", state->battery);
     lv_canvas_draw_text(canvas, 0, -1, 68, &label_dsc_battery, battery_text);
+
+
+
+    lv_draw_label_dsc_t label_dsc_volt;
+    init_label_dsc(&label_dsc_volt, LVGL_FOREGROUND, &lv_font_montserrat_14, LV_TEXT_ALIGN_CENTER);
+
+    //vẽ voltage bên dưới
+    char v_text[10];    
+   
+    if (current_voltage_mv > 0) {
+     // 2 chữ số thập phân
+        // Ví dụ: 4200 mV -> 4.20Vi
+        // 3750 mV -> 3.75V
+        snprintf(v_text, sizeof(v_text), "%d.%03d", 
+                 current_voltage_mv / 1000,           // Phần nguyên: 4200/1000 = 4
+                 (current_voltage_mv % 1000));   
+    } else {
+        snprintf(v_text, sizeof(v_text), "---");
+    }
+
+    lv_canvas_draw_text(canvas, 0, 40, 68, &label_dsc_volt, v_text);
     
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
@@ -547,7 +550,7 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     lv_obj_align(middle, LV_ALIGN_TOP_RIGHT, -64, 0);
     lv_canvas_set_buffer(middle, widget->cbuf2, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
     lv_obj_t *bottom = lv_canvas_create(widget->obj);
-    lv_obj_align(bottom, LV_ALIGN_TOP_RIGHT, -120, 0);
+    lv_obj_align(bottom, LV_ALIGN_TOP_RIGHT, -115, 0);
     lv_canvas_set_buffer(bottom, widget->cbuf3, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
 
     // Đọc nhiệt độ ban đầu
