@@ -53,12 +53,16 @@ struct wpm_status_state {
 int max = 0;
 int min = 256;
 
+
+
 // ========================================
 // TEMPERATURE SENSOR
 // ========================================
 
 static struct sensor_value current_temp_val = {0};
 static bool temp_data_valid = false;
+
+static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state)
 
 static void read_temperature(void) {
     const struct device *dev = DEVICE_DT_GET_ONE(nordic_nrf_temp);
