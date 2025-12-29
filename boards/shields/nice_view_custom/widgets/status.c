@@ -148,7 +148,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     init_line_dsc(&line_dsc, LVGL_FOREGROUND, 1);
 
     lv_draw_label_dsc_t label_dsc_temp_unit;
-    init_label_dsc(&label_dsc_temp_unit, LVGL_FOREGROUND, &lv_font_unscii_8, LV_TEXT_ALIGN_RIGHT);
+    init_label_dsc(&label_dsc_temp_unit, LVGL_FOREGROUND, &pixel_operator_mono, LV_TEXT_ALIGN_RIGHT);
 
 
     // Fill background
