@@ -181,7 +181,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
 
     // Draw WPM box
     lv_canvas_draw_rect(canvas, 0, 21, 68, 42, &rect_white_dsc);
-    lv_canvas_draw_rect(canvas, 1, 22, 66, 40, &rect_black_dsc);
+    lv_canvas_draw_rect(canvas, 0, 22, 68, 40, &rect_black_dsc);
 
     // Calculate WPM stats
     for (int i = 0; i < 10; i++) {
@@ -196,7 +196,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     // Draw WPM number (top right)
     char wpm_text[6] = {};
     snprintf(wpm_text, sizeof(wpm_text), "%d", max);
-    lv_canvas_draw_text(canvas, 18, 13, 48, &label_dsc_wpm, wpm_text);
+    lv_canvas_draw_text(canvas, 18, 16, 48, &label_dsc_wpm, wpm_text);
     
     // Draw WPM graph
     int range = max - min;
@@ -234,7 +234,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     // x=2: sát lề trái khung (khung bắt đầu từ x=1)
     // y=48: góc dưới (khung kết thúc ở y=62, text height ~14px, 62-14=48)
     // max_width=64: chiều rộng khung - 2px padding
-    lv_canvas_draw_text(canvas, 0, 37, 68, &label_dsc_temp, temp_text);
+    lv_canvas_draw_text(canvas, 0, 3, 68, &label_dsc_temp, temp_text);
 
     lv_canvas_draw_text(canvas, 0, 41, 68, &label_dsc_temp_unit, "°C");
 
