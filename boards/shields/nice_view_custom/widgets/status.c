@@ -370,7 +370,7 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
         snprintf(v_text, sizeof(v_text), "---");
     }
 
-    lv_canvas_draw_text(canvas, 0, 0, 68, &label_dsc_volt, v_text);
+    lv_canvas_draw_text(canvas, 0, 60, 68, &label_dsc_volt, v_text);
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
