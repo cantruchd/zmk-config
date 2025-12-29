@@ -6,6 +6,9 @@
  */
 
 #include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/sensor.h>
+#include <stdlib.h>
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -20,6 +23,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #include <zmk/events/endpoint_changed.h>
 #include <zmk/events/wpm_state_changed.h>
 #include <zmk/events/layer_state_changed.h>
+#include <zmk/events/activity_state_changed.h>
 #include <zmk/usb.h>
 #include <zmk/ble.h>
 #include <zmk/endpoints.h>
@@ -49,6 +53,80 @@ struct wpm_status_state {
 int max = 0;
 int min = 256;
 
+// ========================================
+// TEMPERATURE SENSOR
+// ========================================
+
+static struct sensor_value current_temp_val = {0};
+static bool temp_data_valid = false;
+
+static void read_temperature(void) {
+    const struct device *dev = DEVICE_DT_GET_ONE(nordic_nrf_temp);
+    
+    if (!device_is_ready(dev)) {
+        LOG_WRN("Temperature sensor not ready");
+        temp_data_valid = false;
+        return;
+    }
+
+    struct sensor_value temp_val;
+    int rc = sensor_sample_fetch(dev);
+    if (rc == 0) {
+        rc = sensor_channel_get(dev, SENSOR_CHAN_DIE_TEMP, &temp_val);
+        if (rc == 0) {
+            current_temp_val = temp_val;
+            temp_data_valid = true;
+            LOG_DBG("Temperature: %d.%d°C", temp_val.val1, abs(temp_val.val2 / 100000));
+        }
+    } else {
+        LOG_WRN("Failed to fetch temperature: %d", rc);
+        temp_data_valid = false;
+    }
+}
+
+static void temp_work_handler(struct k_work *work) {
+    read_temperature();
+    
+    // Redraw all widgets
+    struct zmk_widget_status *widget;
+    SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
+        draw_top(widget->obj, widget->cbuf, &widget->state);
+    }
+}
+
+K_WORK_DEFINE(temp_work, temp_work_handler);
+
+static void temp_timer_handler(struct k_timer *timer) {
+    k_work_submit(&temp_work);
+}
+
+K_TIMER_DEFINE(temp_timer, temp_timer_handler, NULL);
+
+// Activity listener để tắt timer khi idle
+static int temperature_listener(const zmk_event_t *eh) {
+    struct zmk_activity_state_changed *ev = as_zmk_activity_state_changed(eh);
+    if (ev == NULL) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+
+    if (ev->state == ZMK_ACTIVITY_IDLE || ev->state == ZMK_ACTIVITY_SLEEP) {
+        k_timer_stop(&temp_timer);
+        LOG_DBG("Temperature timer stopped");
+    } else if (ev->state == ZMK_ACTIVITY_ACTIVE) {
+        k_timer_start(&temp_timer, K_SECONDS(1), K_SECONDS(30));
+        LOG_DBG("Temperature timer started");
+    }
+
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(widget_temperature, temperature_listener);
+ZMK_SUBSCRIPTION(widget_temperature, zmk_activity_state_changed);
+
+// ========================================
+// DRAWING FUNCTIONS
+// ========================================
+
 static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state) {
     lv_obj_t *canvas = lv_obj_get_child(widget, 0);
 
@@ -56,6 +134,8 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_16, LV_TEXT_ALIGN_RIGHT);
     lv_draw_label_dsc_t label_dsc_wpm;
     init_label_dsc(&label_dsc_wpm, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_RIGHT);
+    lv_draw_label_dsc_t label_dsc_temp;
+    init_label_dsc(&label_dsc_temp, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_LEFT);
     lv_draw_rect_dsc_t rect_black_dsc;
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
     lv_draw_rect_dsc_t rect_white_dsc;
@@ -91,15 +171,11 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
 
     lv_canvas_draw_text(canvas, 0, 0, CANVAS_SIZE, &label_dsc, output_text);
 
-    // Draw WPM
+    // Draw WPM box
     lv_canvas_draw_rect(canvas, 0, 21, 68, 42, &rect_white_dsc);
     lv_canvas_draw_rect(canvas, 1, 22, 66, 40, &rect_black_dsc);
 
-    
-
-    // int max = 0;
-    // int min = 256;
-
+    // Calculate WPM stats
     for (int i = 0; i < 10; i++) {
         if (state->wpm[i] > max) {
             max = state->wpm[i];
@@ -109,10 +185,12 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
         }
     }
 
+    // Draw WPM number (top right)
     char wpm_text[6] = {};
     snprintf(wpm_text, sizeof(wpm_text), "%d", max);
     lv_canvas_draw_text(canvas, 18, 13, 48, &label_dsc_wpm, wpm_text);
     
+    // Draw WPM graph
     int range = max - min;
     if (range == 0) {
         range = 1;
@@ -124,6 +202,31 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
         points[i].y = 60 - (state->wpm[i] - min) * 36 / range;
     }
     lv_canvas_draw_line(canvas, points, 10, &line_dsc);
+
+    // ========================================
+    // VẼ NHIỆT ĐỘ - GÓC DƯỚI TRÁI KHUNG WPM
+    // ========================================
+    char temp_text[16];
+    if (temp_data_valid) {
+        // Lấy 1 chữ số thập phân
+        int decimal = abs(current_temp_val.val2) / 100000;
+        
+        // Format: "27.2°C"
+        if (current_temp_val.val1 == 0 && current_temp_val.val2 < 0) {
+            snprintf(temp_text, sizeof(temp_text), "-0.%d°C", decimal);
+        } else {
+            snprintf(temp_text, sizeof(temp_text), "%d.%d°C", 
+                     current_temp_val.val1, decimal);
+        }
+    } else {
+        snprintf(temp_text, sizeof(temp_text), "--.-°C");
+    }
+    
+    // Vẽ nhiệt độ ở góc dưới trái khung WPM
+    // x=2: sát lề trái khung (khung bắt đầu từ x=1)
+    // y=48: góc dưới (khung kết thúc ở y=62, text height ~14px, 62-14=48)
+    // max_width=64: chiều rộng khung - 2px padding
+    lv_canvas_draw_text(canvas, 2, 48, 64, &label_dsc_temp, temp_text);
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
@@ -144,18 +247,12 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
     init_label_dsc(&label_dsc, LVGL_FOREGROUND, &lv_font_montserrat_18, LV_TEXT_ALIGN_CENTER);
     lv_draw_label_dsc_t label_dsc_black;
     init_label_dsc(&label_dsc_black, LVGL_BACKGROUND, &lv_font_montserrat_18, LV_TEXT_ALIGN_CENTER);
-    
-  
-
 
     // Fill background
     lv_canvas_draw_rect(canvas, 0, 0, CANVAS_SIZE, CANVAS_SIZE, &rect_black_dsc);
 
-
-
     // Draw circles
     int circle_offsets[NICEVIEW_PROFILE_COUNT][2] = {
-      //  {13, 13}, {55, 13}, {34, 34}, {13, 55}, {55, 55},        
         {13, 13}, {55, 13}, {34, 28}, {13, 43}, {55, 43},
     };
 
@@ -203,18 +300,15 @@ static void draw_bottom(lv_obj_t *widget, lv_color_t cbuf[], const struct status
     // Draw layer
     if (state->layer_label == NULL || strlen(state->layer_label) == 0) {
         char text[10] = {};
-
         sprintf(text, "LAYER %i", state->layer_index);
-
         lv_canvas_draw_text(canvas, 0, 24, 68, &label_dsc, text);
     } else {
         lv_canvas_draw_text(canvas, 0, 24, 68, &label_dsc, state->layer_label);
     }
 
-    // draw battery
+    // Draw battery
     lv_draw_label_dsc_t label_dsc_battery;
     init_label_dsc(&label_dsc_battery, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_CENTER);
-    // Draw battery percentage
     char battery_text[5] = {};
     snprintf(battery_text, sizeof(battery_text), "%d%%", state->battery);
     lv_canvas_draw_text(canvas, 0, -1, 68, &label_dsc_battery, battery_text);
@@ -223,16 +317,19 @@ static void draw_bottom(lv_obj_t *widget, lv_color_t cbuf[], const struct status
     rotate_canvas(canvas, cbuf);
 }
 
+// ========================================
+// EVENT HANDLERS
+// ========================================
+
 static void set_battery_status(struct zmk_widget_status *widget,
                                struct battery_status_state state) {
 #if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
     widget->state.charging = state.usb_present;
-#endif /* IS_ENABLED(CONFIG_USB_DEVICE_STACK) */
+#endif
 
     widget->state.battery = state.level;
 
     draw_top(widget->obj, widget->cbuf, &widget->state);
-
     draw_bottom(widget->obj, widget->cbuf3, &widget->state);
 }
 
@@ -248,7 +345,7 @@ static struct battery_status_state battery_status_get_state(const zmk_event_t *e
         .level = (ev != NULL) ? ev->state_of_charge : zmk_battery_state_of_charge(),
 #if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
         .usb_present = zmk_usb_is_powered(),
-#endif /* IS_ENABLED(CONFIG_USB_DEVICE_STACK) */
+#endif
     };
 }
 
@@ -258,7 +355,7 @@ ZMK_DISPLAY_WIDGET_LISTENER(widget_battery_status, struct battery_status_state,
 ZMK_SUBSCRIPTION(widget_battery_status, zmk_battery_state_changed);
 #if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
 ZMK_SUBSCRIPTION(widget_battery_status, zmk_usb_conn_state_changed);
-#endif /* IS_ENABLED(CONFIG_USB_DEVICE_STACK) */
+#endif
 
 static void set_output_status(struct zmk_widget_status *widget,
                               const struct output_status_state *state) {
@@ -357,11 +454,18 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     lv_obj_align(top, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_canvas_set_buffer(top, widget->cbuf, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
     lv_obj_t *middle = lv_canvas_create(widget->obj);
-    lv_obj_align(middle, LV_ALIGN_TOP_RIGHT, -64, 0);//easier to align
+    lv_obj_align(middle, LV_ALIGN_TOP_RIGHT, -64, 0);
     lv_canvas_set_buffer(middle, widget->cbuf2, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
     lv_obj_t *bottom = lv_canvas_create(widget->obj);
     lv_obj_align(bottom, LV_ALIGN_TOP_RIGHT, -120, 0);
     lv_canvas_set_buffer(bottom, widget->cbuf3, CANVAS_SIZE, CANVAS_SIZE, LV_IMG_CF_TRUE_COLOR);
+
+    // Đọc nhiệt độ ban đầu
+    read_temperature();
+    
+    // Start temperature timer
+    k_timer_start(&temp_timer, K_SECONDS(2), K_SECONDS(30));
+    LOG_INF("Temperature monitoring started");
 
     sys_slist_append(&widgets, &widget->node);
     widget_battery_status_init();
