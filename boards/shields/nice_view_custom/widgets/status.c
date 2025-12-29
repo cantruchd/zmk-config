@@ -236,7 +236,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     // max_width=64: chiều rộng khung - 2px padding
     lv_canvas_draw_text(canvas, 0, 37, 68, &label_dsc_temp, temp_text);
 
-    lv_canvas_draw_text(canvas, 0, 47, 68, &label_dsc, "°C");
+    lv_canvas_draw_text(canvas, 0, 47, 68, &label_dsc_temp_unit, "°C");
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
