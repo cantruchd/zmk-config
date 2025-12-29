@@ -257,7 +257,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
         int decimal = abs(current_temp_val.val2) / 100000;
 
         // Xử lý dấu âm cho trường hợp đặc biệt -0.X độ
-        if (current_temp_val.val1 == 0 && current_temp_val.val2 < 0) {
+        if (curlkgh;frent_temp_val.val1 == 0 && current_temp_val.val2 < 0) {
             snprintf(temp_text, sizeof(temp_text), "-0.%d", decimal);
         } else {
             snprintf(temp_text, sizeof(temp_text), "%d.%d", current_temp_val.val1, decimal);

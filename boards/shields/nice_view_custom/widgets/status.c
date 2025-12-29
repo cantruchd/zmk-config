@@ -54,6 +54,63 @@ int max = 0;
 int min = 256;
 
 
+static uint16_t current_voltage_mv = 0;
+
+// Biến static để ghi nhớ channel đúng sau lần dò đầu tiên
+static enum sensor_channel discovered_channel = SENSOR_CHAN_PRIV_START; // Giá trị mặc định chưa xác định
+
+static void read_battery_voltage(void) {
+    const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
+    
+    if (!device_is_ready(battery)) {
+        LOG_WRN("Battery sensor not ready");
+        return;
+    }
+
+    // 1. Lấy mẫu dữ liệu từ cảm biến (Fetch)
+    int rc = sensor_sample_fetch(battery);
+    if (rc != 0) {
+        LOG_WRN("Failed to fetch battery: %d", rc);
+        return;
+    }
+
+    struct sensor_value voltage;
+
+    // 2. Nếu đã biết channel đúng, lấy trực tiếp luôn
+    if (discovered_channel != SENSOR_CHAN_PRIV_START) {
+        rc = sensor_channel_get(battery, discovered_channel, &voltage);
+    } 
+    // 3. Nếu chưa biết (lần đầu chạy), tiến hành dò tìm
+    else {
+        static const enum sensor_channel candidates[] = {
+            SENSOR_CHAN_VOLTAGE,
+            SENSOR_CHAN_ALL,
+            SENSOR_CHAN_GAUGE_VOLTAGE            
+        };
+
+        for (int i = 0; i < ARRAY_SIZE(candidates); i++) {
+            rc = sensor_channel_get(battery, candidates[i], &voltage);
+            if (rc == 0) {
+                discovered_channel = candidates[i]; // Ghi nhớ channel này
+                sprintf(logtext, "Ch %d", i + 1); // Ghi log channel tìm được
+                break;
+            }
+        }
+    }
+
+    // 4. Xử lý kết quả cuối cùng
+    if (rc == 0) {
+        // Tính toán mV: val1 (Volts), val2 (Microvolts)
+        current_voltage_mv = (voltage.val1 * 1000) + (voltage.val2 / 1000);
+        
+        // Chỉ log khi cần thiết để tránh tràn log buffer
+        LOG_INF("Voltage: %d mV", current_voltage_mv);
+    } else {
+        LOG_ERR("No valid voltage channel found");
+        current_voltage_mv = 0;
+    }
+}
+
 
 // ========================================
 // TEMPERATURE SENSOR
@@ -90,11 +147,13 @@ static void read_temperature(void) {
 
 static void temp_work_handler(struct k_work *work) {
     read_temperature();
+    read_battery_voltage();
     
     // Redraw all widgets
     struct zmk_widget_status *widget;
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
         draw_top(widget->obj, widget->cbuf, &widget->state);
+        draw_middle(widget->obj, widget->cbuf2, &widget->state);
     }
 }
 
@@ -292,6 +351,26 @@ static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status
                             (selected ? &label_dsc_black : &label_dsc), label);
     }
 
+    lv_draw_label_dsc_t label_dsc_volt;
+    init_label_dsc(&label_dsc_volt, LVGL_FOREGROUND, &lv_font_montserrat_14, LV_TEXT_ALIGN_CENTER);
+
+    //vẽ voltage bên dưới
+    char v_text[10];
+    
+    snprintf(v_label, sizeof(v_label), "%d", (current_voltage_mv % 10) );
+    if (current_voltage_mv > 0) {
+     // 2 chữ số thập phân
+        // Ví dụ: 4200 mV -> 4.20Vi
+        // 3750 mV -> 3.75V
+        snprintf(v_text, sizeof(v_text), "%d.%03d", 
+                 current_voltage_mv / 1000,           // Phần nguyên: 4200/1000 = 4
+                 (current_voltage_mv % 1000));   
+    } else {
+        snprintf(v_text, sizeof(v_text), "---");
+    }
+
+    lv_canvas_draw_text(canvas, 0, 0, 68, &label_dsc_volt, v_text);
+
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
 }
@@ -472,6 +551,7 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
 
     // Đọc nhiệt độ ban đầu
     read_temperature();
+    read_battery_voltage();
     
     // Start temperature timer
     k_timer_start(&temp_timer, K_SECONDS(2), K_SECONDS(30));
