@@ -383,7 +383,7 @@ static void draw_bottom(lv_obj_t *widget, lv_color_t cbuf[], const struct status
     init_label_dsc(&label_dsc_battery, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_CENTER);
     char battery_text[5] = {};
     snprintf(battery_text, sizeof(battery_text), "%d%%", state->battery);
-    lv_canvas_draw_text(canvas, 0, -1, 68, &label_dsc_battery, battery_text);
+    lv_canvas_draw_text(canvas, 0, 0, 68, &label_dsc_battery, battery_text);
 
 
 
