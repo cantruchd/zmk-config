@@ -230,7 +230,7 @@ static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_st
     // x=2: sát lề trái khung (khung bắt đầu từ x=1)
     // y=48: góc dưới (khung kết thúc ở y=62, text height ~14px, 62-14=48)
     // max_width=64: chiều rộng khung - 2px padding
-    lv_canvas_draw_text(canvas, 2, 48, 64, &label_dsc_temp, temp_text);
+    lv_canvas_draw_text(canvas, 0, 28, 64, &label_dsc_temp, temp_text);
 
     // Rotate canvas
     rotate_canvas(canvas, cbuf);
