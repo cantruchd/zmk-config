@@ -120,6 +120,7 @@ static struct sensor_value current_temp_val = {0};
 static bool temp_data_valid = false;
 
 static void draw_top(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state);
+static void draw_middle(lv_obj_t *widget, lv_color_t cbuf[], const struct status_state *state);
 
 static void read_temperature(void) {
     const struct device *dev = DEVICE_DT_GET_ONE(nordic_nrf_temp);
