@@ -124,9 +124,8 @@ static int battery_monitor_listener(const zmk_event_t *eh) {
     }
     
     uint8_t battery_percent = ev->state_of_charge;
-    uint16_t battery_mv = ev->state_voltage;
     
-    LOG_INF("Battery: %d%% (%dmV)", battery_percent, battery_mv);
+    LOG_INF("Battery: %d%%", battery_percent);
     
     // Storage mode logic - auto turn off fan at 40%
     if (battery_percent <= STORAGE_THRESHOLD && fan_state) {
