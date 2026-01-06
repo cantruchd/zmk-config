@@ -1,0 +1,17 @@
+# Kconfig.shield
+# Shield definition for ZMK build system
+#
+# Location: config/boards/shields/battery_monitor/Kconfig.shield
+
+config SHIELD_BATTERY_MONITOR
+    def_bool $(shields_list_contains,battery_monitor)
+    select ZMK_BLE
+    select ZMK_BATTERY_REPORTING
+
+# Optional: Reed switch support
+config BATTERY_MONITOR_REED_SWITCH
+    bool "Enable reed switch for manual control"
+    default n
+    help
+      Enable reed switch on P0.17 for manual fan toggle.
+      Wave magnet near reed switch to toggle fan on/off.

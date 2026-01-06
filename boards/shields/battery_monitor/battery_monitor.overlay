@@ -1,0 +1,80 @@
+/*
+ * battery_monitor.overlay
+ * Hardware configuration for Battery Monitor Shield
+ * 
+ * Location: config/boards/shields/battery_monitor/battery_monitor.overlay
+ */
+
+/ {
+    chosen {
+        zmk,battery = &vbatt;
+    };
+
+    /*
+     * Battery voltage sensing
+     * nice!nano has built-in voltage divider on BAT+ pin
+     * No external divider needed when connected to single cell
+     * 
+     * For 2× nice!nano setup:
+     * - Board #1: BAT+ = Cell 1+, GND = Cell 1-
+     * - Board #2: BAT+ = Cell 2+, GND = Cell 1+ (middle tap)
+     */
+    vbatt: vbatt {
+        compatible = "zmk,battery-voltage-divider";
+        label = "BATTERY";
+        io-channels = <&adc 7>;
+        power-gpios = <&gpio0 31 GPIO_ACTIVE_HIGH>;
+        full-ohms = <2000000>;
+        output-ohms = <806000>;
+    };
+
+    /*
+     * MOSFET control for fan power switching
+     * GPIO P0.15 controls MOSFET gate
+     * MOSFET switches ground connection to fan/motor
+     */
+    mosfet {
+        compatible = "gpio-leds";
+        mosfet_ctrl: mosfet_control {
+            gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>;
+            label = "Fan MOSFET Control";
+        };
+    };
+
+    /*
+     * Reed switch for manual control (optional)
+     * Wave magnet near sensor to trigger
+     * P0.17 with pull-down resistor
+     */
+    keys {
+        compatible = "gpio-keys";
+        reed_switch: reed_switch {
+            gpios = <&gpio0 17 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+            label = "Reed Switch";
+        };
+    };
+};
+
+/*
+ * GPIO configuration
+ */
+&gpio0 {
+    status = "okay";
+};
+
+/*
+ * ADC configuration for battery monitoring
+ */
+&adc {
+    status = "okay";
+};
+
+/*
+ * Pin assignments reference:
+ * 
+ * P0.15 - MOSFET Gate Control (output)
+ * P0.17 - Reed Switch Input (optional, input with pull-down)
+ * P0.31 - Battery voltage sense power control (built-in)
+ * 
+ * BAT+ and GND are used for powering the board and battery monitoring
+ */

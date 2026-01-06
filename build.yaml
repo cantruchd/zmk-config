@@ -28,3 +28,6 @@ include:
 
   - board: nice_nano_v2
     shield: settings_reset
+  
+  - board: nice_nano_v2
+    shield: battery_monitor
