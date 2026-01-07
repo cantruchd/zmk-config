@@ -1,3 +1,101 @@
+// Thêm vào đầu file
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/uuid.h>
+
+// Define custom service UUID
+#define BT_UUID_CUSTOM_SERVICE_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef0)
+
+#define BT_UUID_CUSTOM_SERVICE \
+    BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERVICE_VAL)
+
+// Define characteristic UUID for fan control
+#define BT_UUID_FAN_CONTROL_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef1)
+
+#define BT_UUID_FAN_CONTROL \
+    BT_UUID_DECLARE_128(BT_UUID_FAN_CONTROL_VAL)
+
+// Commands
+#define CMD_FAN_OFF    0x00
+#define CMD_FAN_ON     0x01
+#define CMD_FAN_TOGGLE 0x02
+#define CMD_GET_STATUS 0x03
+
+// ============================================================================
+// GATT Characteristic Handlers
+// ============================================================================
+
+/**
+ * Write handler for fan control characteristic
+ * Called when app writes to the characteristic
+ */
+static ssize_t write_fan_control(struct bt_conn *conn,
+                                  const struct bt_gatt_attr *attr,
+                                  const void *buf, uint16_t len,
+                                  uint16_t offset, uint8_t flags) {
+    if (offset + len > sizeof(uint8_t)) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+
+    uint8_t command = *((uint8_t *)buf);
+    
+    LOG_INF("Received BLE command: 0x%02X", command);
+    
+    switch (command) {
+        case CMD_FAN_OFF:
+            battery_monitor_fan_off();
+            break;
+            
+        case CMD_FAN_ON:
+            battery_monitor_fan_on();
+            break;
+            
+        case CMD_FAN_TOGGLE:
+            battery_monitor_fan_toggle();
+            break;
+            
+        case CMD_GET_STATUS:
+            // Status will be sent via notification/indication
+            LOG_INF("Status request - Fan is %s", fan_state ? "ON" : "OFF");
+            break;
+            
+        default:
+            LOG_WRN("Unknown command: 0x%02X", command);
+            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    return len;
+}
+
+/**
+ * Read handler for fan control characteristic
+ * Called when app reads the characteristic
+ */
+static ssize_t read_fan_control(struct bt_conn *conn,
+                                 const struct bt_gatt_attr *attr,
+                                 void *buf, uint16_t len, uint16_t offset) {
+    uint8_t status = fan_state ? 0x01 : 0x00;
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, &status, sizeof(status));
+}
+
+// ============================================================================
+// GATT Service Definition
+// ============================================================================
+
+BT_GATT_SERVICE_DEFINE(fan_control_svc,
+    BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
+    
+    // Fan control characteristic (read/write)
+    BT_GATT_CHARACTERISTIC(BT_UUID_FAN_CONTROL,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,
+                          BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                          read_fan_control, write_fan_control, NULL),
+);
+
+
+
+
 /*
  * battery_monitor.c
  * Custom battery monitoring and MOSFET control logic
