@@ -65,12 +65,12 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define BT_UUID_POWER_CONTROL \
     BT_UUID_DECLARE_128(BT_UUID_POWER_CONTROL_VAL)
 
-// Temperature characteristic UUID
-#define BT_UUID_TEMPERATURE_VAL \
+// Temperature characteristic UUID (custom, not standard BLE temp service)
+#define BT_UUID_CUSTOM_TEMP_VAL \
     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef2)
 
-#define BT_UUID_TEMPERATURE \
-    BT_UUID_DECLARE_128(BT_UUID_TEMPERATURE_VAL)
+#define BT_UUID_CUSTOM_TEMP \
+    BT_UUID_DECLARE_128(BT_UUID_CUSTOM_TEMP_VAL)
 
 // Commands for power control
 #define CMD_POWER_OFF    0x00
@@ -87,6 +87,9 @@ static bool power_state = false;
 static uint8_t last_battery_percent = 100;
 static int16_t current_temperature = 0;  // Temperature in 0.01°C
 static struct k_work_delayable temp_work;
+
+// Forward declaration of GATT service (defined later)
+extern const struct bt_gatt_service_static battery_monitor_svc;
 
 // Forward declarations for GATT service
 static ssize_t read_power_control(struct bt_conn *conn,
@@ -341,7 +344,7 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
     
     // Temperature characteristic (read/notify)
-    BT_GATT_CHARACTERISTIC(BT_UUID_TEMPERATURE,
+    BT_GATT_CHARACTERISTIC(BT_UUID_CUSTOM_TEMP,
                           BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
                           BT_GATT_PERM_READ,
                           read_temperature, NULL, NULL),
