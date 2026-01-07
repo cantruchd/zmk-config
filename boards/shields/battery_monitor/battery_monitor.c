@@ -1,111 +1,14 @@
-// Thêm vào đầu file
-#include <zephyr/bluetooth/gatt.h>
-#include <zephyr/bluetooth/uuid.h>
-
-// Define custom service UUID
-#define BT_UUID_CUSTOM_SERVICE_VAL \
-    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef0)
-
-#define BT_UUID_CUSTOM_SERVICE \
-    BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERVICE_VAL)
-
-// Define characteristic UUID for fan control
-#define BT_UUID_FAN_CONTROL_VAL \
-    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef1)
-
-#define BT_UUID_FAN_CONTROL \
-    BT_UUID_DECLARE_128(BT_UUID_FAN_CONTROL_VAL)
-
-// Commands
-#define CMD_FAN_OFF    0x00
-#define CMD_FAN_ON     0x01
-#define CMD_FAN_TOGGLE 0x02
-#define CMD_GET_STATUS 0x03
-
-// ============================================================================
-// GATT Characteristic Handlers
-// ============================================================================
-
-/**
- * Write handler for fan control characteristic
- * Called when app writes to the characteristic
- */
-static ssize_t write_fan_control(struct bt_conn *conn,
-                                  const struct bt_gatt_attr *attr,
-                                  const void *buf, uint16_t len,
-                                  uint16_t offset, uint8_t flags) {
-    if (offset + len > sizeof(uint8_t)) {
-        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
-    }
-
-    uint8_t command = *((uint8_t *)buf);
-    
-    LOG_INF("Received BLE command: 0x%02X", command);
-    
-    switch (command) {
-        case CMD_FAN_OFF:
-            battery_monitor_fan_off();
-            break;
-            
-        case CMD_FAN_ON:
-            battery_monitor_fan_on();
-            break;
-            
-        case CMD_FAN_TOGGLE:
-            battery_monitor_fan_toggle();
-            break;
-            
-        case CMD_GET_STATUS:
-            // Status will be sent via notification/indication
-            LOG_INF("Status request - Fan is %s", fan_state ? "ON" : "OFF");
-            break;
-            
-        default:
-            LOG_WRN("Unknown command: 0x%02X", command);
-            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
-    }
-    
-    return len;
-}
-
-/**
- * Read handler for fan control characteristic
- * Called when app reads the characteristic
- */
-static ssize_t read_fan_control(struct bt_conn *conn,
-                                 const struct bt_gatt_attr *attr,
-                                 void *buf, uint16_t len, uint16_t offset) {
-    uint8_t status = fan_state ? 0x01 : 0x00;
-    return bt_gatt_attr_read(conn, attr, buf, len, offset, &status, sizeof(status));
-}
-
-// ============================================================================
-// GATT Service Definition
-// ============================================================================
-
-BT_GATT_SERVICE_DEFINE(fan_control_svc,
-    BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
-    
-    // Fan control characteristic (read/write)
-    BT_GATT_CHARACTERISTIC(BT_UUID_FAN_CONTROL,
-                          BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE,
-                          BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
-                          read_fan_control, write_fan_control, NULL),
-);
-
-
-
-
 /*
  * battery_monitor.c
- * Custom battery monitoring and MOSFET control logic
+ * Custom battery monitoring, MOSFET control, and temperature reporting
  * 
  * Location: config/boards/shields/battery_monitor/battery_monitor.c
  * 
  * Features:
- * - MOSFET control for fan power (on/off/toggle)
+ * - MOSFET control for battery power (on/off/toggle)
  * - Automatic storage mode at 40%
  * - Low battery warnings
+ * - Temperature monitoring and BLE reporting
  * - Optional reed switch support
  */
 
@@ -113,7 +16,11 @@ BT_GATT_SERVICE_DEFINE(fan_control_svc,
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/sensor.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/uuid.h>
 
 #include <zmk/battery.h>
 #include <zmk/ble.h>
@@ -134,26 +41,129 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define LOW_WARNING         35  // Warning at 35%
 #define CRITICAL_LOW        20  // Critical at 20%
 
+// Temperature update interval (milliseconds)
+#define TEMP_UPDATE_INTERVAL_MS  10000  // 10 seconds
+
 // Reed switch debounce time (milliseconds)
 #define REED_DEBOUNCE_MS    50
+
+// ============================================================================
+// BLE Service and Characteristic UUIDs
+// ============================================================================
+
+// Custom service UUID for battery control and temperature
+#define BT_UUID_CUSTOM_SERVICE_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef0)
+
+#define BT_UUID_CUSTOM_SERVICE \
+    BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERVICE_VAL)
+
+// Battery power control characteristic UUID
+#define BT_UUID_POWER_CONTROL_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef1)
+
+#define BT_UUID_POWER_CONTROL \
+    BT_UUID_DECLARE_128(BT_UUID_POWER_CONTROL_VAL)
+
+// Temperature characteristic UUID
+#define BT_UUID_TEMPERATURE_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef2)
+
+#define BT_UUID_TEMPERATURE \
+    BT_UUID_DECLARE_128(BT_UUID_TEMPERATURE_VAL)
+
+// Commands for power control
+#define CMD_POWER_OFF    0x00
+#define CMD_POWER_ON     0x01
+#define CMD_POWER_TOGGLE 0x02
 
 // ============================================================================
 // Global Variables
 // ============================================================================
 
 static const struct device *gpio_dev;
-static bool fan_state = false;
+static const struct device *temp_dev;
+static bool power_state = false;
 static uint8_t last_battery_percent = 100;
+static int16_t current_temperature = 0;  // Temperature in 0.01°C
+static struct k_work_delayable temp_work;
+
+// Forward declarations for GATT service
+static ssize_t read_power_control(struct bt_conn *conn,
+                                   const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset);
+static ssize_t write_power_control(struct bt_conn *conn,
+                                    const struct bt_gatt_attr *attr,
+                                    const void *buf, uint16_t len,
+                                    uint16_t offset, uint8_t flags);
+static ssize_t read_temperature(struct bt_conn *conn,
+                                 const struct bt_gatt_attr *attr,
+                                 void *buf, uint16_t len, uint16_t offset);
+
+// ============================================================================
+// Temperature Sensor Functions
+// ============================================================================
+
+/**
+ * Read temperature from nRF52840 internal sensor
+ * @return temperature in 0.01°C (e.g., 2550 = 25.50°C)
+ */
+static int16_t read_temp_sensor(void) {
+    struct sensor_value temp_value;
+    int ret;
+    
+    if (temp_dev == NULL) {
+        LOG_ERR("Temperature device not ready");
+        return 0;
+    }
+    
+    ret = sensor_sample_fetch(temp_dev);
+    if (ret < 0) {
+        LOG_ERR("Failed to fetch temperature: %d", ret);
+        return 0;
+    }
+    
+    ret = sensor_channel_get(temp_dev, SENSOR_CHAN_DIE_TEMP, &temp_value);
+    if (ret < 0) {
+        LOG_ERR("Failed to get temperature: %d", ret);
+        return 0;
+    }
+    
+    // Convert to 0.01°C
+    // temp_value.val1 = integer part, val2 = fractional part (in millionths)
+    int16_t temp_celsius = temp_value.val1 * 100;
+    temp_celsius += temp_value.val2 / 10000;
+    
+    return temp_celsius;
+}
+
+/**
+ * Temperature update work handler
+ * Periodically reads temperature and updates BLE characteristic
+ */
+static void temp_work_handler(struct k_work *work) {
+    current_temperature = read_temp_sensor();
+    
+    float temp_float = current_temperature / 100.0f;
+    LOG_INF("Temperature: %.2f°C", temp_float);
+    
+    // Notify connected BLE clients about temperature change
+    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], 
+                   &current_temperature, sizeof(current_temperature));
+    
+    // Schedule next update
+    k_work_reschedule(&temp_work, K_MSEC(TEMP_UPDATE_INTERVAL_MS));
+}
 
 // ============================================================================
 // MOSFET Control Functions
 // ============================================================================
 
 /**
- * Set MOSFET state (fan on/off)
+ * Set MOSFET state (battery power on/off)
  * @param on: true to turn on, false to turn off
  */
-static void set_fan_state(bool on) {
+static void set_power_state(bool on) {
     if (gpio_dev == NULL) {
         LOG_ERR("GPIO device not ready");
         return;
@@ -165,56 +175,53 @@ static void set_fan_state(bool on) {
         return;
     }
     
-    fan_state = on;
-    LOG_INF("Fan %s", on ? "ON" : "OFF");
+    power_state = on;
+    LOG_INF("Battery power %s", on ? "ON" : "OFF");
+    
+    // Notify BLE clients about power state change
+    uint8_t status = power_state ? 0x01 : 0x00;
+    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[2], &status, sizeof(status));
 }
 
 /**
- * Turn fan on
- * Can be called from BLE command or other triggers
+ * Turn battery power on
  */
-void battery_monitor_fan_on(void) {
-    LOG_INF("Manual fan ON command");
-    set_fan_state(true);
+void battery_monitor_power_on(void) {
+    LOG_INF("Manual power ON command");
+    set_power_state(true);
 }
 
 /**
- * Turn fan off
- * Can be called from BLE command or other triggers
+ * Turn battery power off
  */
-void battery_monitor_fan_off(void) {
-    LOG_INF("Manual fan OFF command");
-    set_fan_state(false);
+void battery_monitor_power_off(void) {
+    LOG_INF("Manual power OFF command");
+    set_power_state(false);
 }
 
 /**
- * Toggle fan state
- * Useful for reed switch or button control
+ * Toggle battery power state
  */
-void battery_monitor_fan_toggle(void) {
-    LOG_INF("Toggle fan command");
-    set_fan_state(!fan_state);
+void battery_monitor_power_toggle(void) {
+    LOG_INF("Toggle power command");
+    set_power_state(!power_state);
 }
 
 /**
- * Get current fan state
- * @return true if fan is on, false if off
+ * Get current power state
  */
-bool battery_monitor_get_fan_state(void) {
-    return fan_state;
+bool battery_monitor_get_power_state(void) {
+    return power_state;
 }
 
 // ============================================================================
-// Battery Monitoring
+// Battery Level Monitoring
 // ============================================================================
 
 /**
  * Battery state change listener
- * Automatically monitors battery and takes action based on thresholds
- * 
- * This function is called whenever battery state changes (voltage, percentage)
  */
-static int battery_monitor_listener(const zmk_event_t *eh) {
+static int battery_level_listener(const zmk_event_t *eh) {
     struct zmk_battery_state_changed *ev = as_zmk_battery_state_changed(eh);
     
     if (ev == NULL) {
@@ -225,11 +232,11 @@ static int battery_monitor_listener(const zmk_event_t *eh) {
     
     LOG_INF("Battery: %d%%", battery_percent);
     
-    // Storage mode logic - auto turn off fan at 40%
-    if (battery_percent <= STORAGE_THRESHOLD && fan_state) {
+    // Storage mode logic - auto turn off at 40%
+    if (battery_percent <= STORAGE_THRESHOLD && power_state) {
         LOG_WRN("Battery at storage level (%d%%), entering storage mode", 
                 battery_percent);
-        set_fan_state(false);
+        set_power_state(false);
     }
     
     // Low battery warning
@@ -245,10 +252,9 @@ static int battery_monitor_listener(const zmk_event_t *eh) {
             LOG_ERR("Battery critical: %d%% - Please charge soon!", 
                     battery_percent);
         }
-        // Force off if still on at critical level
-        if (fan_state) {
-            LOG_ERR("Forcing fan OFF due to critical battery");
-            set_fan_state(false);
+        if (power_state) {
+            LOG_ERR("Forcing power OFF due to critical battery");
+            set_power_state(false);
         }
     }
     
@@ -258,8 +264,89 @@ static int battery_monitor_listener(const zmk_event_t *eh) {
 }
 
 // Register listener for battery state changes
-ZMK_LISTENER(battery_monitor, battery_monitor_listener);
+ZMK_LISTENER(battery_monitor, battery_level_listener);
 ZMK_SUBSCRIPTION(battery_monitor, zmk_battery_state_changed);
+
+// ============================================================================
+// BLE GATT Service Implementation
+// ============================================================================
+
+/**
+ * Read handler for power control characteristic
+ */
+static ssize_t read_power_control(struct bt_conn *conn,
+                                   const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset) {
+    uint8_t status = power_state ? 0x01 : 0x00;
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, &status, sizeof(status));
+}
+
+/**
+ * Write handler for power control characteristic
+ */
+static ssize_t write_power_control(struct bt_conn *conn,
+                                    const struct bt_gatt_attr *attr,
+                                    const void *buf, uint16_t len,
+                                    uint16_t offset, uint8_t flags) {
+    if (offset + len > sizeof(uint8_t)) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+
+    uint8_t command = *((uint8_t *)buf);
+    
+    LOG_INF("Received BLE command: 0x%02X", command);
+    
+    switch (command) {
+        case CMD_POWER_OFF:
+            battery_monitor_power_off();
+            break;
+            
+        case CMD_POWER_ON:
+            battery_monitor_power_on();
+            break;
+            
+        case CMD_POWER_TOGGLE:
+            battery_monitor_power_toggle();
+            break;
+            
+        default:
+            LOG_WRN("Unknown command: 0x%02X", command);
+            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    return len;
+}
+
+/**
+ * Read handler for temperature characteristic
+ */
+static ssize_t read_temperature(struct bt_conn *conn,
+                                 const struct bt_gatt_attr *attr,
+                                 void *buf, uint16_t len, uint16_t offset) {
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, 
+                            &current_temperature, sizeof(current_temperature));
+}
+
+/**
+ * GATT Service Definition
+ */
+BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
+    BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
+    
+    // Power control characteristic (read/write/notify)
+    BT_GATT_CHARACTERISTIC(BT_UUID_POWER_CONTROL,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                          read_power_control, write_power_control, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    
+    // Temperature characteristic (read/notify)
+    BT_GATT_CHARACTERISTIC(BT_UUID_TEMPERATURE,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ,
+                          read_temperature, NULL, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+);
 
 // ============================================================================
 // Reed Switch Handler (Optional)
@@ -272,33 +359,27 @@ static struct k_work_delayable reed_work;
 
 /**
  * Reed switch work handler (debounced)
- * This is called after debounce delay
  */
 static void reed_switch_work_handler(struct k_work *work) {
-    // Toggle fan state when reed switch is activated
-    battery_monitor_fan_toggle();
+    battery_monitor_power_toggle();
     LOG_INF("Reed switch activated");
 }
 
 /**
  * Reed switch interrupt handler
- * Called immediately when reed switch triggers
  */
 static void reed_switch_handler(const struct device *dev, 
                                 struct gpio_callback *cb,
                                 uint32_t pins) {
-    // Schedule debounced work
     k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
 }
 
 /**
  * Initialize reed switch
- * @return 0 on success, negative error code on failure
  */
 static int init_reed_switch(void) {
     int ret;
     
-    // Configure reed switch pin as input with pull-down
     ret = gpio_pin_configure(gpio_dev, REED_PIN, 
                             GPIO_INPUT | GPIO_PULL_DOWN);
     if (ret < 0) {
@@ -306,7 +387,6 @@ static int init_reed_switch(void) {
         return ret;
     }
     
-    // Configure interrupt on rising edge
     ret = gpio_pin_interrupt_configure(gpio_dev, REED_PIN, 
                                        GPIO_INT_EDGE_RISING);
     if (ret < 0) {
@@ -314,11 +394,9 @@ static int init_reed_switch(void) {
         return ret;
     }
     
-    // Initialize callback
     gpio_init_callback(&reed_cb_data, reed_switch_handler, BIT(REED_PIN));
     gpio_add_callback(gpio_dev, &reed_cb_data);
     
-    // Initialize work queue
     k_work_init_delayable(&reed_work, reed_switch_work_handler);
     
     LOG_INF("Reed switch initialized on P0.%d", REED_PIN);
@@ -334,9 +412,6 @@ static int init_reed_switch(void) {
 
 /**
  * Initialize battery monitor
- * Called during system startup
- * @param dev: device structure (unused)
- * @return 0 on success, negative error code on failure
  */
 static int battery_monitor_init(const struct device *dev) {
     ARG_UNUSED(dev);
@@ -351,7 +426,14 @@ static int battery_monitor_init(const struct device *dev) {
         return -ENODEV;
     }
     
-    // Configure MOSFET pin as output, initially LOW (fan off)
+    // Get temperature sensor device
+    temp_dev = DEVICE_DT_GET(DT_NODELABEL(temp));
+    if (!device_is_ready(temp_dev)) {
+        LOG_ERR("Temperature device not ready");
+        return -ENODEV;
+    }
+    
+    // Configure MOSFET pin as output, initially LOW (power off)
     ret = gpio_pin_configure(gpio_dev, MOSFET_PIN, GPIO_OUTPUT_INACTIVE);
     if (ret < 0) {
         LOG_ERR("Failed to configure MOSFET pin: %d", ret);
@@ -359,14 +441,17 @@ static int battery_monitor_init(const struct device *dev) {
     }
     
     // Set initial state: OFF (safe default for storage mode)
-    set_fan_state(false);
+    set_power_state(false);
+    
+    // Initialize temperature monitoring
+    k_work_init_delayable(&temp_work, temp_work_handler);
+    k_work_schedule(&temp_work, K_MSEC(1000));  // Start after 1 second
     
     #ifdef CONFIG_BATTERY_MONITOR_REED_SWITCH
     // Initialize reed switch if enabled
     ret = init_reed_switch();
     if (ret < 0) {
         LOG_WRN("Reed switch initialization failed, continuing without it");
-        // Don't return error, continue without reed switch
     }
     #endif
     
@@ -375,78 +460,88 @@ static int battery_monitor_init(const struct device *dev) {
     LOG_INF("  - Storage threshold: %d%%", STORAGE_THRESHOLD);
     LOG_INF("  - Low warning: %d%%", LOW_WARNING);
     LOG_INF("  - Critical: %d%%", CRITICAL_LOW);
+    LOG_INF("  - Temperature sensor: enabled");
     
     return 0;
 }
 
-// Initialize at application level, after other subsystems
+// Initialize at application level
 SYS_INIT(battery_monitor_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 // ============================================================================
-// Shell Commands (Optional - for debugging via USB)
+// Shell Commands (Optional - for debugging)
 // ============================================================================
 
 #ifdef CONFIG_SHELL
 
 #include <zephyr/shell/shell.h>
 
-static int cmd_fan_on(const struct shell *shell, size_t argc, char **argv) {
-    battery_monitor_fan_on();
-    shell_print(shell, "Fan turned ON");
+static int cmd_power_on(const struct shell *shell, size_t argc, char **argv) {
+    battery_monitor_power_on();
+    shell_print(shell, "Battery power turned ON");
     return 0;
 }
 
-static int cmd_fan_off(const struct shell *shell, size_t argc, char **argv) {
-    battery_monitor_fan_off();
-    shell_print(shell, "Fan turned OFF");
+static int cmd_power_off(const struct shell *shell, size_t argc, char **argv) {
+    battery_monitor_power_off();
+    shell_print(shell, "Battery power turned OFF");
     return 0;
 }
 
-static int cmd_fan_toggle(const struct shell *shell, size_t argc, char **argv) {
-    battery_monitor_fan_toggle();
-    shell_print(shell, "Fan toggled");
+static int cmd_power_toggle(const struct shell *shell, size_t argc, char **argv) {
+    battery_monitor_power_toggle();
+    shell_print(shell, "Battery power toggled");
     return 0;
 }
 
-static int cmd_fan_status(const struct shell *shell, size_t argc, char **argv) {
-    shell_print(shell, "Fan is currently %s", 
-                fan_state ? "ON" : "OFF");
+static int cmd_status(const struct shell *shell, size_t argc, char **argv) {
+    shell_print(shell, "Battery power is currently %s", 
+                power_state ? "ON" : "OFF");
     shell_print(shell, "Last battery reading: %d%%", last_battery_percent);
+    
+    float temp_float = current_temperature / 100.0f;
+    shell_print(shell, "Current temperature: %.2f°C", temp_float);
     return 0;
 }
 
-SHELL_STATIC_SUBCMD_SET_CREATE(sub_fan,
-    SHELL_CMD(on, NULL, "Turn fan on", cmd_fan_on),
-    SHELL_CMD(off, NULL, "Turn fan off", cmd_fan_off),
-    SHELL_CMD(toggle, NULL, "Toggle fan", cmd_fan_toggle),
-    SHELL_CMD(status, NULL, "Show fan status", cmd_fan_status),
+static int cmd_temp(const struct shell *shell, size_t argc, char **argv) {
+    int16_t temp = read_temp_sensor();
+    float temp_float = temp / 100.0f;
+    shell_print(shell, "Temperature: %.2f°C", temp_float);
+    return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(sub_battery,
+    SHELL_CMD(on, NULL, "Turn battery power on", cmd_power_on),
+    SHELL_CMD(off, NULL, "Turn battery power off", cmd_power_off),
+    SHELL_CMD(toggle, NULL, "Toggle battery power", cmd_power_toggle),
+    SHELL_CMD(status, NULL, "Show status", cmd_status),
+    SHELL_CMD(temp, NULL, "Read temperature", cmd_temp),
     SHELL_SUBCMD_SET_END
 );
 
-SHELL_CMD_REGISTER(fan, &sub_fan, "Fan control commands", NULL);
+SHELL_CMD_REGISTER(battery, &sub_battery, "Battery control commands", NULL);
 
 #endif // CONFIG_SHELL
 
 /*
- * Usage Notes:
+ * BLE Service Summary:
  * 
- * This code runs on nice!nano #1 (Cell 1 board) which has MOSFET connected.
- * nice!nano #2 (Cell 2 board) will also run this code but MOSFET control
- * won't do anything since no MOSFET is connected.
+ * Service UUID: 12345678-1234-5678-1234-56789abcdef0
  * 
- * Both boards independently:
- * - Monitor their connected cell voltage
- * - Report battery percentage via Bluetooth
- * - Can be paired to same phone/device
+ * Characteristics:
+ * 1. Power Control (12345678-1234-5678-1234-56789abcdef1)
+ *    - Read: Get current power state (0x00=OFF, 0x01=ON)
+ *    - Write: Control power (0x00=OFF, 0x01=ON, 0x02=TOGGLE)
+ *    - Notify: Notifies when power state changes
  * 
- * To control fan via BLE:
- * - Implement BLE characteristic write handler
- * - Call battery_monitor_fan_on/off/toggle functions
- * - Or use reed switch for physical control
+ * 2. Temperature (12345678-1234-5678-1234-56789abcdef2)
+ *    - Read: Get current temperature (int16_t in 0.01°C)
+ *    - Notify: Updates every 10 seconds
  * 
- * For debugging:
- * - Enable CONFIG_SHELL in .conf
- * - Connect USB
- * - Use serial terminal (115200 baud)
- * - Commands: fan on, fan off, fan toggle, fan status
+ * Temperature Format:
+ * - Value is int16_t (2 bytes, little-endian)
+ * - Unit: 0.01°C
+ * - Example: 2550 = 25.50°C
+ * - Range: -128°C to +127°C (nRF52840 spec: -40°C to +85°C)
  */

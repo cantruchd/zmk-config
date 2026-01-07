@@ -91,6 +91,13 @@
 };
 
 /*
+ * Enable temperature sensor (nRF52840 internal)
+ */
+&temp {
+    status = "okay";
+};
+
+/*
  * Pin Usage Summary:
  * 
  * BAT+  - Battery positive (Cell 1+ or Cell 2+ depending on board)
