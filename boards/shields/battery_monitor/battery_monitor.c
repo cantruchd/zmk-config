@@ -21,7 +21,6 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/uuid.h>
-#include <zephyr/bluetooth/conn.h>
 
 #include <zmk/battery.h>
 #include <zmk/ble.h>
@@ -373,30 +372,10 @@ static void reed_switch_work_handler(struct k_work *work) {
     
     LOG_WRN("Reed switch activated - Clearing Bluetooth bonds");
     
-    // Disconnect all active connections first
-    struct bt_conn *conn = bt_conn_lookup_state_le(BT_ID_DEFAULT, NULL, 
-                                                    BT_CONN_STATE_CONNECTED);
-    while (conn) {
-        LOG_INF("Disconnecting active connection");
-        bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
-        bt_conn_unref(conn);
-        conn = bt_conn_lookup_state_le(BT_ID_DEFAULT, NULL, 
-                                       BT_CONN_STATE_CONNECTED);
-    }
-    
-    // Use ZMK's bond clearing function
-    int ret = zmk_ble_clear_bonds();
-    if (ret == 0) {
-        LOG_INF("All Bluetooth bonds cleared successfully");
-        LOG_INF("Device will restart advertising as unpaired");
-    } else {
-        LOG_ERR("Failed to clear bonds: %d", ret);
-        
-        // Fallback: use Zephyr API
-        LOG_INF("Attempting fallback bond clear method");
-        bt_unpair(BT_ID_DEFAULT, BT_ADDR_LE_ANY);
-        LOG_INF("Fallback bond clear completed");
-    }
+    // Use ZMK's bond clearing function (returns void)
+    zmk_ble_clear_bonds();
+    LOG_INF("All Bluetooth bonds cleared successfully");
+    LOG_INF("Device will restart advertising as unpaired");
 }
 
 /**
@@ -587,16 +566,9 @@ static int cmd_reed_test(const struct shell *shell, size_t argc, char **argv) {
 static int cmd_force_clear_bonds(const struct shell *shell, size_t argc, char **argv) {
     shell_print(shell, "⚠️  Forcing Bluetooth bond clear...");
     
-    int ret = zmk_ble_clear_bonds();
-    if (ret == 0) {
-        shell_print(shell, "✓ Bonds cleared successfully");
-        shell_print(shell, "  Device will now advertise as unpaired");
-    } else {
-        shell_error(shell, "✗ Failed to clear bonds: %d", ret);
-        shell_print(shell, "  Attempting fallback method...");
-        bt_unpair(BT_ID_DEFAULT, BT_ADDR_LE_ANY);
-        shell_print(shell, "  Fallback method executed");
-    }
+    zmk_ble_clear_bonds();
+    shell_print(shell, "✓ Bonds cleared successfully");
+    shell_print(shell, "  Device will now advertise as unpaired");
     
     return 0;
 }
