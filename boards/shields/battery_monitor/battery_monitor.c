@@ -363,19 +363,27 @@ static struct k_work_delayable reed_work;
  * Function: Clear Bluetooth bonds (unpair all devices)
  */
 static void reed_switch_work_handler(struct k_work *work) {
+    LOG_INF("Reed work handler started");
+    
     // Double-check pin is still low (magnet still present / GND still connected)
     int pin_state = gpio_pin_get(gpio_dev, REED_PIN);
+    LOG_INF("Reed pin state after debounce: %d (0=LOW/active, 1=HIGH/inactive)", pin_state);
+    
     if (pin_state != 0) {
         LOG_INF("Reed switch released before debounce completed, ignoring");
         return;
     }
     
-    LOG_WRN("Reed switch activated - Clearing Bluetooth bonds");
+    LOG_WRN("========================================");
+    LOG_WRN("Reed switch CONFIRMED - Clearing bonds!");
+    LOG_WRN("========================================");
     
     // Use ZMK's bond clearing function (returns void)
     zmk_ble_clear_bonds();
-    LOG_INF("All Bluetooth bonds cleared successfully");
-    LOG_INF("Device will restart advertising as unpaired");
+    
+    LOG_WRN("All Bluetooth bonds cleared successfully");
+    LOG_WRN("Device will restart advertising as unpaired");
+    LOG_WRN("========================================");
 }
 
 /**
@@ -385,9 +393,14 @@ static void reed_switch_work_handler(struct k_work *work) {
 static void reed_switch_handler(const struct device *dev, 
                                 struct gpio_callback *cb,
                                 uint32_t pins) {
-    LOG_DBG("Reed switch interrupt triggered on pin mask 0x%08X", pins);
+    LOG_WRN("Reed switch interrupt! Pin mask: 0x%08X", pins);
+    
+    // Read current pin state immediately
+    int immediate_state = gpio_pin_get(gpio_dev, REED_PIN);
+    LOG_INF("Immediate pin state: %d (0=LOW, 1=HIGH)", immediate_state);
     
     // Schedule debounced work
+    LOG_INF("Scheduling reed work with %dms debounce", REED_DEBOUNCE_MS);
     k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
 }
 
