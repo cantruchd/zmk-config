@@ -408,6 +408,19 @@ static void reed_switch_handler(const struct device *dev,
                 LOG_WRN("Reed switch held long enough (%u us >= %u us)", 
                         us, REED_MIN_LOW_US);
                 LOG_INF("Scheduling bond clear with %dms debounce", REED_DEBOUNCE_MS);
+
+                LOG_INF("Reed work handler - executing bond clear");
+    
+                LOG_WRN("========================================");
+                LOG_WRN("Clearing all Bluetooth bonds!");
+                LOG_WRN("========================================");
+                
+                // Use ZMK's bond clearing function (returns void)
+                zmk_ble_clear_bonds();
+                
+                LOG_WRN("All Bluetooth bonds cleared successfully");
+                LOG_WRN("Device will restart advertising as unpaired");
+                LOG_WRN("========================================");
                 k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
             } else {
                 LOG_INF("Reed switch pulse too short (%u us < %u us), ignoring", 
