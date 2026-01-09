@@ -368,7 +368,7 @@ static void reed_switch_work_handler(struct k_work *work) {
     LOG_INF("Reed switch activated - Clearing Bluetooth bonds");
     
     // Clear all paired devices using ZMK BLE API
-    for (int i = 0; i < BT_ID_COUNT; i++) {
+    for (int i = 0; i < 5; i++) {
         bt_unpair(i, BT_ADDR_LE_ANY);
     }
     
