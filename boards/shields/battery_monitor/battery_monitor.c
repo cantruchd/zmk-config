@@ -355,7 +355,7 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
 // Reed Switch Handler (Optional)
 // ============================================================================
 
-#ifdef CONFIG_BATTERY_MONITOR_REED_SWITCH
+
 
 static struct gpio_callback reed_cb_data;
 static struct k_work_delayable reed_work;
@@ -414,7 +414,7 @@ static int init_reed_switch(void) {
     return 0;
 }
 
-#endif // CONFIG_BATTERY_MONITOR_REED_SWITCH
+
 
 // ============================================================================
 // Initialization
