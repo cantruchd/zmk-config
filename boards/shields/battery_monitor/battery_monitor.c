@@ -9,7 +9,8 @@
  * - Automatic storage mode at 40%
  * - Low battery warnings
  * - Temperature monitoring and BLE reporting
- * - Reed switch support for bond clearing (FIXED)
+ * - Voltage monitoring and BLE reporting (NEW)
+ * - Reed switch support for bond clearing
  */
 
 #include <zephyr/device.h>
@@ -21,6 +22,8 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/uuid.h>
+#include <zephyr/sys/reboot.h>
+#include <stdlib.h>
 
 #include <zmk/battery.h>
 #include <zmk/ble.h>
@@ -46,8 +49,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // Reed switch debounce time (milliseconds)
 #define REED_DEBOUNCE_MS    50
-// Minimum LOW duration required to trigger action (microseconds)
-#define REED_MIN_LOW_US     0  // 1ms minimum LOW pulse
+#define REED_MIN_LOW_US     0  // Minimum LOW pulse duration
 
 // ============================================================================
 // BLE Service and Characteristic UUIDs
@@ -67,12 +69,19 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define BT_UUID_POWER_CONTROL \
     BT_UUID_DECLARE_128(BT_UUID_POWER_CONTROL_VAL)
 
-// Temperature characteristic UUID (custom, not standard BLE temp service)
+// Temperature characteristic UUID
 #define BT_UUID_CUSTOM_TEMP_VAL \
     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef2)
 
 #define BT_UUID_CUSTOM_TEMP \
     BT_UUID_DECLARE_128(BT_UUID_CUSTOM_TEMP_VAL)
+
+// Voltage characteristic UUID (NEW)
+#define BT_UUID_VOLTAGE_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef3)
+
+#define BT_UUID_VOLTAGE \
+    BT_UUID_DECLARE_128(BT_UUID_VOLTAGE_VAL)
 
 // Commands for power control
 #define CMD_POWER_OFF    0x00
@@ -85,12 +94,17 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static const struct device *gpio_dev;
 static const struct device *temp_dev;
+static const struct device *battery_dev;  // NEW: Battery sensor device
 static bool power_state = false;
 static uint8_t last_battery_percent = 100;
 static int16_t current_temperature = 0;  // Temperature in 0.01°C
+static uint16_t current_voltage_mv = 0;  // NEW: Voltage in millivolts
 static struct k_work_delayable temp_work;
 
-// Forward declaration of GATT service (defined later)
+// NEW: Channel discovery (like reference code)
+static enum sensor_channel discovered_channel = SENSOR_CHAN_PRIV_START;
+
+// Forward declaration of GATT service
 extern const struct bt_gatt_service_static battery_monitor_svc;
 
 // Forward declarations for GATT service
@@ -104,6 +118,68 @@ static ssize_t write_power_control(struct bt_conn *conn,
 static ssize_t read_temperature(struct bt_conn *conn,
                                  const struct bt_gatt_attr *attr,
                                  void *buf, uint16_t len, uint16_t offset);
+static ssize_t read_voltage(struct bt_conn *conn,
+                             const struct bt_gatt_attr *attr,
+                             void *buf, uint16_t len, uint16_t offset);
+
+// ============================================================================
+// Battery Voltage Reading (Based on reference code)
+// ============================================================================
+
+/**
+ * Read battery voltage from ZMK battery sensor
+ * Uses channel discovery like the reference code
+ */
+static void read_battery_voltage(void) {
+    if (battery_dev == NULL || !device_is_ready(battery_dev)) {
+        LOG_WRN("Battery sensor not ready");
+        return;
+    }
+
+    // 1. Fetch sample from sensor
+    int rc = sensor_sample_fetch(battery_dev);
+    if (rc != 0) {
+        LOG_WRN("Failed to fetch battery: %d", rc);
+        return;
+    }
+
+    struct sensor_value voltage;
+
+    // 2. If we already know the correct channel, use it directly
+    if (discovered_channel != SENSOR_CHAN_PRIV_START) {
+        rc = sensor_channel_get(battery_dev, discovered_channel, &voltage);
+    } 
+    // 3. Otherwise, discover the correct channel (first run)
+    else {
+        static const enum sensor_channel candidates[] = {
+            SENSOR_CHAN_VOLTAGE,
+            SENSOR_CHAN_ALL,
+            SENSOR_CHAN_GAUGE_VOLTAGE            
+        };
+
+        for (int i = 0; i < ARRAY_SIZE(candidates); i++) {
+            rc = sensor_channel_get(battery_dev, candidates[i], &voltage);
+            if (rc == 0) {
+                discovered_channel = candidates[i]; // Remember this channel
+                LOG_INF("Voltage channel discovered: index %d", i);
+                break;
+            }
+        }
+    }
+
+    // 4. Process the result
+    if (rc == 0) {
+        // Calculate mV: val1 (Volts), val2 (Microvolts)
+        current_voltage_mv = (voltage.val1 * 1000) + (voltage.val2 / 1000);
+        
+        LOG_INF("Voltage: %d mV (%.3f V)", 
+                current_voltage_mv, 
+                current_voltage_mv / 1000.0f);
+    } else {
+        LOG_ERR("No valid voltage channel found");
+        current_voltage_mv = 0;
+    }
+}
 
 // ============================================================================
 // Temperature Sensor Functions
@@ -135,7 +211,6 @@ static int16_t read_temp_sensor(void) {
     }
     
     // Convert to 0.01°C
-    // temp_value.val1 = integer part, val2 = fractional part (in millionths)
     int16_t temp_celsius = temp_value.val1 * 100;
     temp_celsius += temp_value.val2 / 10000;
     
@@ -143,18 +218,25 @@ static int16_t read_temp_sensor(void) {
 }
 
 /**
- * Temperature update work handler
- * Periodically reads temperature and updates BLE characteristic
+ * Temperature and Voltage update work handler
+ * Periodically reads temp + voltage and updates BLE characteristics
  */
 static void temp_work_handler(struct k_work *work) {
+    // Read temperature
     current_temperature = read_temp_sensor();
-    
     float temp_float = current_temperature / 100.0f;
     LOG_INF("Temperature: %.2f°C", temp_float);
     
-    // Notify connected BLE clients about temperature change
+    // Read voltage (NEW)
+    read_battery_voltage();
+    
+    // Notify BLE clients about temperature change
     bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], 
                    &current_temperature, sizeof(current_temperature));
+    
+    // Notify BLE clients about voltage change (NEW)
+    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], 
+                   &current_voltage_mv, sizeof(current_voltage_mv));
     
     // Schedule next update
     k_work_reschedule(&temp_work, K_MSEC(TEMP_UPDATE_INTERVAL_MS));
@@ -164,10 +246,6 @@ static void temp_work_handler(struct k_work *work) {
 // MOSFET Control Functions
 // ============================================================================
 
-/**
- * Set MOSFET state (battery power on/off)
- * @param on: true to turn on, false to turn off
- */
 static void set_power_state(bool on) {
     if (gpio_dev == NULL) {
         LOG_ERR("GPIO device not ready");
@@ -183,38 +261,25 @@ static void set_power_state(bool on) {
     power_state = on;
     LOG_INF("Battery power %s", on ? "ON" : "OFF");
     
-    // Notify BLE clients about power state change
     uint8_t status = power_state ? 0x01 : 0x00;
     bt_gatt_notify(NULL, &battery_monitor_svc.attrs[2], &status, sizeof(status));
 }
 
-/**
- * Turn battery power on
- */
 void battery_monitor_power_on(void) {
     LOG_INF("Manual power ON command");
     set_power_state(true);
 }
 
-/**
- * Turn battery power off
- */
 void battery_monitor_power_off(void) {
     LOG_INF("Manual power OFF command");
     set_power_state(false);
 }
 
-/**
- * Toggle battery power state
- */
 void battery_monitor_power_toggle(void) {
     LOG_INF("Toggle power command");
     set_power_state(!power_state);
 }
 
-/**
- * Get current power state
- */
 bool battery_monitor_get_power_state(void) {
     return power_state;
 }
@@ -223,9 +288,6 @@ bool battery_monitor_get_power_state(void) {
 // Battery Level Monitoring
 // ============================================================================
 
-/**
- * Battery state change listener
- */
 static int battery_level_listener(const zmk_event_t *eh) {
     struct zmk_battery_state_changed *ev = as_zmk_battery_state_changed(eh);
     
@@ -237,7 +299,7 @@ static int battery_level_listener(const zmk_event_t *eh) {
     
     LOG_INF("Battery: %d%%", battery_percent);
     
-    // Storage mode logic - auto turn off at 40%
+    // Storage mode logic
     if (battery_percent <= STORAGE_THRESHOLD && power_state) {
         LOG_WRN("Battery at storage level (%d%%), entering storage mode", 
                 battery_percent);
@@ -268,7 +330,6 @@ static int battery_level_listener(const zmk_event_t *eh) {
     return 0;
 }
 
-// Register listener for battery state changes
 ZMK_LISTENER(battery_monitor, battery_level_listener);
 ZMK_SUBSCRIPTION(battery_monitor, zmk_battery_state_changed);
 
@@ -276,9 +337,6 @@ ZMK_SUBSCRIPTION(battery_monitor, zmk_battery_state_changed);
 // BLE GATT Service Implementation
 // ============================================================================
 
-/**
- * Read handler for power control characteristic
- */
 static ssize_t read_power_control(struct bt_conn *conn,
                                    const struct bt_gatt_attr *attr,
                                    void *buf, uint16_t len, uint16_t offset) {
@@ -286,9 +344,6 @@ static ssize_t read_power_control(struct bt_conn *conn,
     return bt_gatt_attr_read(conn, attr, buf, len, offset, &status, sizeof(status));
 }
 
-/**
- * Write handler for power control characteristic
- */
 static ssize_t write_power_control(struct bt_conn *conn,
                                     const struct bt_gatt_attr *attr,
                                     const void *buf, uint16_t len,
@@ -322,9 +377,6 @@ static ssize_t write_power_control(struct bt_conn *conn,
     return len;
 }
 
-/**
- * Read handler for temperature characteristic
- */
 static ssize_t read_temperature(struct bt_conn *conn,
                                  const struct bt_gatt_attr *attr,
                                  void *buf, uint16_t len, uint16_t offset) {
@@ -333,7 +385,17 @@ static ssize_t read_temperature(struct bt_conn *conn,
 }
 
 /**
- * GATT Service Definition
+ * Read handler for voltage characteristic (NEW)
+ */
+static ssize_t read_voltage(struct bt_conn *conn,
+                             const struct bt_gatt_attr *attr,
+                             void *buf, uint16_t len, uint16_t offset) {
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, 
+                            &current_voltage_mv, sizeof(current_voltage_mv));
+}
+
+/**
+ * GATT Service Definition (with voltage characteristic added)
  */
 BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
     BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
@@ -351,21 +413,23 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
                           BT_GATT_PERM_READ,
                           read_temperature, NULL, NULL),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    
+    // Voltage characteristic (read/notify) - NEW
+    BT_GATT_CHARACTERISTIC(BT_UUID_VOLTAGE,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ,
+                          read_voltage, NULL, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 );
 
 // ============================================================================
-// Reed Switch Handler (FIXED VERSION)
+// Reed Switch Handler
 // ============================================================================
 
 static struct gpio_callback reed_cb_data;
 static struct k_work_delayable reed_work;
-static volatile uint32_t reed_low_timestamp = 0;  // Timestamp when pin went LOW
+static volatile uint32_t reed_low_timestamp = 0;
 
-/**
- * Reed switch work handler (debounced)
- * Function: Clear Bluetooth bonds (unpair all devices)
- * Note: This runs after debounce, action already confirmed by interrupt handler
- */
 static void reed_switch_work_handler(struct k_work *work) {
     LOG_INF("Reed work handler - executing bond clear");
     
@@ -373,58 +437,36 @@ static void reed_switch_work_handler(struct k_work *work) {
     LOG_WRN("Clearing all Bluetooth bonds!");
     LOG_WRN("========================================");
     
-    // Use ZMK's bond clearing function (returns void)
     zmk_ble_clear_bonds();
     
     LOG_WRN("All Bluetooth bonds cleared successfully");
-    LOG_WRN("Device will restart advertising as unpaired");
+    LOG_WRN("Rebooting device to restart advertising...");
     LOG_WRN("========================================");
+    
+    k_sleep(K_MSEC(200));
+    sys_reboot(SYS_REBOOT_COLD);
 }
 
-/**
- * Reed switch interrupt handler
- * Triggered on BOTH edges to detect LOW pulse duration
- */
 static void reed_switch_handler(const struct device *dev, 
                                 struct gpio_callback *cb,
                                 uint32_t pins) {
-    // Read current pin state immediately
     int pin_state = gpio_pin_get(gpio_dev, REED_PIN);
     uint32_t now = k_cycle_get_32();
     
     if (pin_state == 0) {
-        // FALLING edge - pin went LOW (GND connected)
         LOG_WRN("Reed switch activated (FALLING edge)");
-        
-  
         reed_low_timestamp = now;
     } else {
-        // RISING edge - pin went HIGH (GND disconnected)
         if (reed_low_timestamp != 0) {
             uint32_t cycles = now - reed_low_timestamp;
             uint32_t us = k_cyc_to_us_floor32(cycles);
             LOG_INF("Reed switch deactivated after %u us", us);
             
-            // Check if LOW duration was long enough
             if (us >= REED_MIN_LOW_US) {
                 LOG_WRN("Reed switch held long enough (%u us >= %u us)", 
                         us, REED_MIN_LOW_US);
                 LOG_INF("Scheduling bond clear with %dms debounce", REED_DEBOUNCE_MS);
-
-                LOG_INF("Reed work handler - executing bond clear");
-    
-                LOG_WRN("========================================");
-                LOG_WRN("Clearing all Bluetooth bonds!");
-                LOG_WRN("========================================");
-                
-                zmk_ble_clear_bonds();
-    
-
-               
-                
-                LOG_WRN("Device ready to pair with new host");
-                LOG_WRN("========================================");
-                //k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
+                k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
             } else {
                 LOG_INF("Reed switch pulse too short (%u us < %u us), ignoring", 
                         us, REED_MIN_LOW_US);
@@ -435,31 +477,23 @@ static void reed_switch_handler(const struct device *dev,
     }
 }
 
-/**
- * Initialize reed switch - FIXED VERSION
- */
 static int init_reed_switch(void) {
     int ret;
     
     LOG_INF("Initializing reed switch on P0.%d", REED_PIN);
     
-    // Configure as INPUT with PULL-UP (pin HIGH normally, LOW when GND connected)
-    ret = gpio_pin_configure(gpio_dev, REED_PIN, 
-                            GPIO_INPUT | GPIO_PULL_UP);  // ✅ FIXED: was PULL_DOWN
+    ret = gpio_pin_configure(gpio_dev, REED_PIN, GPIO_INPUT | GPIO_PULL_UP);
     if (ret < 0) {
         LOG_ERR("Failed to configure reed switch pin: %d", ret);
         return ret;
     }
     
-    // Configure interrupt on BOTH edges (to measure LOW pulse duration)
-    ret = gpio_pin_interrupt_configure(gpio_dev, REED_PIN, 
-                                       GPIO_INT_EDGE_BOTH);  // ✅ Changed to BOTH edges
+    ret = gpio_pin_interrupt_configure(gpio_dev, REED_PIN, GPIO_INT_EDGE_BOTH);
     if (ret < 0) {
         LOG_ERR("Failed to configure reed interrupt: %d", ret);
         return ret;
     }
     
-    // Initialize callback
     gpio_init_callback(&reed_cb_data, reed_switch_handler, BIT(REED_PIN));
     ret = gpio_add_callback(gpio_dev, &reed_cb_data);
     if (ret < 0) {
@@ -467,7 +501,6 @@ static int init_reed_switch(void) {
         return ret;
     }
     
-    // Initialize debounced work
     k_work_init_delayable(&reed_work, reed_switch_work_handler);
     
     LOG_INF("Reed switch initialized successfully");
@@ -477,7 +510,6 @@ static int init_reed_switch(void) {
     LOG_INF("  - Minimum pulse: %u us", REED_MIN_LOW_US);
     LOG_INF("  - Debounce: %dms", REED_DEBOUNCE_MS);
     
-    // Log current pin state for diagnostics
     int initial_state = gpio_pin_get(gpio_dev, REED_PIN);
     LOG_INF("  - Initial state: %s", initial_state ? "HIGH (inactive)" : "LOW (active)");
     
@@ -488,9 +520,6 @@ static int init_reed_switch(void) {
 // Initialization
 // ============================================================================
 
-/**
- * Initialize battery monitor
- */
 static int battery_monitor_init(const struct device *dev) {
     ARG_UNUSED(dev);
     int ret;
@@ -511,19 +540,27 @@ static int battery_monitor_init(const struct device *dev) {
         return -ENODEV;
     }
     
-    // Configure MOSFET pin as output, initially LOW (power off)
+    // Get battery sensor device (NEW)
+    battery_dev = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
+    if (!device_is_ready(battery_dev)) {
+        LOG_WRN("Battery voltage sensor not ready");
+        battery_dev = NULL;
+    } else {
+        LOG_INF("Battery voltage sensor ready");
+    }
+    
+    // Configure MOSFET pin
     ret = gpio_pin_configure(gpio_dev, MOSFET_PIN, GPIO_OUTPUT_INACTIVE);
     if (ret < 0) {
         LOG_ERR("Failed to configure MOSFET pin: %d", ret);
         return ret;
     }
     
-    // Set initial state: OFF (safe default for storage mode)
     set_power_state(false);
     
-    // Initialize temperature monitoring
+    // Initialize temperature and voltage monitoring
     k_work_init_delayable(&temp_work, temp_work_handler);
-    k_work_schedule(&temp_work, K_MSEC(1000));  // Start after 1 second
+    k_work_schedule(&temp_work, K_MSEC(1000));
     
     // Initialize reed switch
     ret = init_reed_switch();
@@ -537,15 +574,15 @@ static int battery_monitor_init(const struct device *dev) {
     LOG_INF("  - Low warning: %d%%", LOW_WARNING);
     LOG_INF("  - Critical: %d%%", CRITICAL_LOW);
     LOG_INF("  - Temperature sensor: enabled");
+    LOG_INF("  - Voltage sensor: %s", battery_dev ? "enabled" : "disabled");
     
     return 0;
 }
 
-// Initialize at application level
 SYS_INIT(battery_monitor_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 // ============================================================================
-// Shell Commands (Optional - for debugging)
+// Shell Commands
 // ============================================================================
 
 #ifdef CONFIG_SHELL
@@ -577,6 +614,11 @@ static int cmd_status(const struct shell *shell, size_t argc, char **argv) {
     
     float temp_float = current_temperature / 100.0f;
     shell_print(shell, "Current temperature: %.2f°C", temp_float);
+    
+    // NEW: Show voltage
+    float voltage_v = current_voltage_mv / 1000.0f;
+    shell_print(shell, "Current voltage: %.3f V (%u mV)", voltage_v, current_voltage_mv);
+    
     return 0;
 }
 
@@ -584,6 +626,13 @@ static int cmd_temp(const struct shell *shell, size_t argc, char **argv) {
     int16_t temp = read_temp_sensor();
     float temp_float = temp / 100.0f;
     shell_print(shell, "Temperature: %.2f°C", temp_float);
+    return 0;
+}
+
+static int cmd_voltage(const struct shell *shell, size_t argc, char **argv) {
+    read_battery_voltage();
+    float voltage_v = current_voltage_mv / 1000.0f;
+    shell_print(shell, "Voltage: %.3f V (%u mV)", voltage_v, current_voltage_mv);
     return 0;
 }
 
@@ -610,11 +659,10 @@ static int cmd_reed_test(const struct shell *shell, size_t argc, char **argv) {
 
 static int cmd_force_clear_bonds(const struct shell *shell, size_t argc, char **argv) {
     shell_print(shell, "⚠️  Forcing Bluetooth bond clear...");
-    
     zmk_ble_clear_bonds();
-    shell_print(shell, "✓ Bonds cleared successfully");
-    shell_print(shell, "  Device will now advertise as unpaired");
-    
+    shell_print(shell, "✓ Bonds cleared, rebooting...");
+    k_sleep(K_MSEC(200));
+    sys_reboot(SYS_REBOOT_COLD);
     return 0;
 }
 
@@ -624,6 +672,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_battery,
     SHELL_CMD(toggle, NULL, "Toggle battery power", cmd_power_toggle),
     SHELL_CMD(status, NULL, "Show status", cmd_status),
     SHELL_CMD(temp, NULL, "Read temperature", cmd_temp),
+    SHELL_CMD(voltage, NULL, "Read battery voltage", cmd_voltage),
     SHELL_CMD(reed, NULL, "Test reed switch state", cmd_reed_test),
     SHELL_CMD(clearbonds, NULL, "Force clear all BLE bonds", cmd_force_clear_bonds),
     SHELL_SUBCMD_SET_END
@@ -632,6 +681,46 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_battery,
 SHELL_CMD_REGISTER(battery, &sub_battery, "Battery monitor commands", NULL);
 
 #endif // CONFIG_SHELL
+
+/*
+ * ============================================================================
+ * BLE Service Summary
+ * ============================================================================
+ * 
+ * Service UUID: 12345678-1234-5678-1234-56789abcdef0
+ * 
+ * Characteristics:
+ * 1. Power Control (12345678-1234-5678-1234-56789abcdef1)
+ *    - Read: Get current power state (0x00=OFF, 0x01=ON)
+ *    - Write: Control power (0x00=OFF, 0x01=ON, 0x02=TOGGLE)
+ *    - Notify: Notifies when power state changes
+ * 
+ * 2. Temperature (12345678-1234-5678-1234-56789abcdef2)
+ *    - Read: Get current temperature (int16_t in 0.01°C)
+ *    - Notify: Updates every 10 seconds
+ * 
+ * 3. Voltage (12345678-1234-5678-1234-56789abcdef3) - NEW
+ *    - Read: Get current voltage (uint16_t in millivolts)
+ *    - Notify: Updates every 10 seconds
+ * 
+ * Temperature Format:
+ * - Value: int16_t (2 bytes, little-endian)
+ * - Unit: 0.01°C
+ * - Example: 2550 = 25.50°C
+ * 
+ * Voltage Format:
+ * - Value: uint16_t (2 bytes, little-endian)
+ * - Unit: millivolts (mV)
+ * - Example: 3700 = 3.7V
+ * - Range: 3000-4200 mV (typical LiPo)
+ * 
+ * ============================================================================
+ * Reed Switch (Bond Clear Feature)
+ * ============================================================================
+ * 
+ * Hardware Connection:
+ * - Pin: P0.17 (D2 on nice!nano, left side)
+ * - Configuration: INPUT with PULL-
 
 /*
  * ============================================================================
