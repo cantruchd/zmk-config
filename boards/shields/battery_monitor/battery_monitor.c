@@ -47,7 +47,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // Reed switch debounce time (milliseconds)
 #define REED_DEBOUNCE_MS    50
 // Minimum LOW duration required to trigger action (microseconds)
-#define REED_MIN_LOW_US     1000  // 1ms minimum LOW pulse
+#define REED_MIN_LOW_US     0  // 1ms minimum LOW pulse
 
 // ============================================================================
 // BLE Service and Characteristic UUIDs
