@@ -46,6 +46,8 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // Reed switch debounce time (milliseconds)
 #define REED_DEBOUNCE_MS    50
+// Minimum LOW duration required to trigger action (microseconds)
+#define REED_MIN_LOW_US     1000  // 1ms minimum LOW pulse
 
 // ============================================================================
 // BLE Service and Characteristic UUIDs
@@ -357,25 +359,18 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
 
 static struct gpio_callback reed_cb_data;
 static struct k_work_delayable reed_work;
+static volatile uint32_t reed_low_timestamp = 0;  // Timestamp when pin went LOW
 
 /**
  * Reed switch work handler (debounced)
  * Function: Clear Bluetooth bonds (unpair all devices)
+ * Note: This runs after debounce, action already confirmed by interrupt handler
  */
 static void reed_switch_work_handler(struct k_work *work) {
-    LOG_INF("Reed work handler started");
-    
-    // Double-check pin is still low (magnet still present / GND still connected)
-    int pin_state = gpio_pin_get(gpio_dev, REED_PIN);
-    LOG_INF("Reed pin state after debounce: %d (0=LOW/active, 1=HIGH/inactive)", pin_state);
-    
-    if (pin_state != 0) {
-        LOG_INF("Reed switch released before debounce completed, ignoring");
-        return;
-    }
+    LOG_INF("Reed work handler - executing bond clear");
     
     LOG_WRN("========================================");
-    LOG_WRN("Reed switch CONFIRMED - Clearing bonds!");
+    LOG_WRN("Clearing all Bluetooth bonds!");
     LOG_WRN("========================================");
     
     // Use ZMK's bond clearing function (returns void)
@@ -388,20 +383,40 @@ static void reed_switch_work_handler(struct k_work *work) {
 
 /**
  * Reed switch interrupt handler
- * Triggered on FALLING edge (when GND connected to pin)
+ * Triggered on BOTH edges to detect LOW pulse duration
  */
 static void reed_switch_handler(const struct device *dev, 
                                 struct gpio_callback *cb,
                                 uint32_t pins) {
-    LOG_WRN("Reed switch interrupt! Pin mask: 0x%08X", pins);
-    
     // Read current pin state immediately
-    int immediate_state = gpio_pin_get(gpio_dev, REED_PIN);
-    LOG_INF("Immediate pin state: %d (0=LOW, 1=HIGH)", immediate_state);
+    int pin_state = gpio_pin_get(gpio_dev, REED_PIN);
+    uint32_t now = k_cycle_get_32();
     
-    // Schedule debounced work
-    LOG_INF("Scheduling reed work with %dms debounce", REED_DEBOUNCE_MS);
-    k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
+    if (pin_state == 0) {
+        // FALLING edge - pin went LOW (GND connected)
+        LOG_WRN("Reed switch activated (FALLING edge)");
+        reed_low_timestamp = now;
+    } else {
+        // RISING edge - pin went HIGH (GND disconnected)
+        if (reed_low_timestamp != 0) {
+            uint32_t cycles = now - reed_low_timestamp;
+            uint32_t us = k_cyc_to_us_floor32(cycles);
+            LOG_INF("Reed switch deactivated after %u us", us);
+            
+            // Check if LOW duration was long enough
+            if (us >= REED_MIN_LOW_US) {
+                LOG_WRN("Reed switch held long enough (%u us >= %u us)", 
+                        us, REED_MIN_LOW_US);
+                LOG_INF("Scheduling bond clear with %dms debounce", REED_DEBOUNCE_MS);
+                k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
+            } else {
+                LOG_INF("Reed switch pulse too short (%u us < %u us), ignoring", 
+                        us, REED_MIN_LOW_US);
+            }
+            
+            reed_low_timestamp = 0;
+        }
+    }
 }
 
 /**
@@ -420,9 +435,9 @@ static int init_reed_switch(void) {
         return ret;
     }
     
-    // Configure interrupt on FALLING edge (HIGH→LOW when GND connected)
+    // Configure interrupt on BOTH edges (to measure LOW pulse duration)
     ret = gpio_pin_interrupt_configure(gpio_dev, REED_PIN, 
-                                       GPIO_INT_EDGE_FALLING);  // ✅ FIXED: was EDGE_RISING
+                                       GPIO_INT_EDGE_BOTH);  // ✅ Changed to BOTH edges
     if (ret < 0) {
         LOG_ERR("Failed to configure reed interrupt: %d", ret);
         return ret;
@@ -442,7 +457,8 @@ static int init_reed_switch(void) {
     LOG_INF("Reed switch initialized successfully");
     LOG_INF("  - Mode: Active LOW (connect P0.17 to GND to trigger)");
     LOG_INF("  - Pull-up: ENABLED");
-    LOG_INF("  - Trigger: FALLING edge");
+    LOG_INF("  - Trigger: BOTH edges (measures LOW pulse width)");
+    LOG_INF("  - Minimum pulse: %u us", REED_MIN_LOW_US);
     LOG_INF("  - Debounce: %dms", REED_DEBOUNCE_MS);
     
     // Log current pin state for diagnostics
