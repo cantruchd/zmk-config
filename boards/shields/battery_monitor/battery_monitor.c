@@ -425,11 +425,18 @@ static void reed_switch_handler(const struct device *dev,
                 // Wait for log to flush
                 k_sleep(K_MSEC(200));
                 
-                // Reboot device - advertising sẽ tự động bật sau reboot
-                sys_reboot(SYS_REBOOT_COLD);  // ✅ Reset thiết bị
+                // Wait a bit for disconnect to complete
+                k_sleep(K_MSEC(500));
+    
+                // Restart advertising as unpaired device
+                int ret = zmk_ble_adv_resume();  // ✅ Bật lại advertising
+                if (ret < 0) {
+                    LOG_ERR("Failed to restart advertising: %d", ret);
+                } else {
+                    LOG_INF("Advertising restarted successfully");
+                }
                 
-                LOG_WRN("All Bluetooth bonds cleared successfully");
-                LOG_WRN("Device will restart advertising as unpaired");
+                LOG_WRN("Device ready to pair with new host");
                 LOG_WRN("========================================");
                 //k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
             } else {
