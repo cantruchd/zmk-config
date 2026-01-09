@@ -367,8 +367,10 @@ static struct k_work_delayable reed_work;
 static void reed_switch_work_handler(struct k_work *work) {
     LOG_INF("Reed switch activated - Clearing Bluetooth bonds");
     
-    // Clear all Bluetooth bonds
-    zmk_ble_clear_bonds();
+    // Clear all paired devices using ZMK BLE API
+    for (int i = 0; i < BT_ID_COUNT; i++) {
+        bt_unpair(i, BT_ADDR_LE_ANY);
+    }
     
     LOG_WRN("All Bluetooth bonds cleared! Device will restart advertising.");
 }
