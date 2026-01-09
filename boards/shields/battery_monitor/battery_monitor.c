@@ -423,7 +423,7 @@ static void reed_switch_handler(const struct device *dev,
                 LOG_WRN("All Bluetooth bonds cleared successfully");
                 LOG_WRN("Device will restart advertising as unpaired");
                 LOG_WRN("========================================");
-                //k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
+                k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
             } else {
                 LOG_INF("Reed switch pulse too short (%u us < %u us), ignoring", 
                         us, REED_MIN_LOW_US);
