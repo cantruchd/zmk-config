@@ -395,6 +395,13 @@ static void reed_switch_handler(const struct device *dev,
     if (pin_state == 0) {
         // FALLING edge - pin went LOW (GND connected)
         LOG_WRN("Reed switch activated (FALLING edge)");
+        
+        LOG_WRN("========================================");
+        LOG_WRN("Clearing all Bluetooth bonds!");
+        LOG_WRN("========================================");
+                
+                // Use ZMK's bond clearing function (returns void)
+                zmk_ble_clear_bonds();
         reed_low_timestamp = now;
     } else {
         // RISING edge - pin went HIGH (GND disconnected)
@@ -421,7 +428,7 @@ static void reed_switch_handler(const struct device *dev,
                 LOG_WRN("All Bluetooth bonds cleared successfully");
                 LOG_WRN("Device will restart advertising as unpaired");
                 LOG_WRN("========================================");
-                k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
+                //k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
             } else {
                 LOG_INF("Reed switch pulse too short (%u us < %u us), ignoring", 
                         us, REED_MIN_LOW_US);
