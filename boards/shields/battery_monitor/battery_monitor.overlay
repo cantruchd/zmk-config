@@ -50,22 +50,21 @@
     };
 
     /*
-     * MOSFET control for fan power switching
-     * Only on nice!nano #1 (Cell 1 board)
-     * GPIO P0.15 controls MOSFET gate
+     * MOSFET control for battery power switching
+     * GPIO P0.24 (D5 pin on nice!nano) controls MOSFET gate
      */
     mosfet {
         compatible = "gpio-leds";
         mosfet_ctrl: mosfet_control {
-            gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>;
-            label = "Fan MOSFET Control";
+            gpios = <&gpio0 24 GPIO_ACTIVE_HIGH>;
+            label = "Battery MOSFET Control";
         };
     };
 
     /*
-     * Reed switch for manual control (optional)
-     * Wave magnet near sensor to trigger functions
-     * P0.17 with internal pull-down
+     * Reed switch for manual bond clearing (optional)
+     * Wave magnet near sensor to clear Bluetooth bonds
+     * P0.17 = D2 pin on nice!nano, with internal pull-down
      */
     keys {
         compatible = "gpio-keys";

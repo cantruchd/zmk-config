@@ -33,8 +33,8 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // ============================================================================
 
 // GPIO pins
-#define MOSFET_PIN  15  // P0.15 - MOSFET gate control
-#define REED_PIN    17  // P0.17 - Reed switch (optional)
+#define MOSFET_PIN  24  // P0.24 = D5 on nice!nano (right side)
+#define REED_PIN    17  // P0.17 = D2 on nice!nano (left side)
 
 // Battery thresholds (percentage)
 #define STORAGE_THRESHOLD   40  // Auto-off at 40%
@@ -362,10 +362,15 @@ static struct k_work_delayable reed_work;
 
 /**
  * Reed switch work handler (debounced)
+ * Function: Clear Bluetooth bonds (unpair all devices)
  */
 static void reed_switch_work_handler(struct k_work *work) {
-    battery_monitor_power_toggle();
-    LOG_INF("Reed switch activated");
+    LOG_INF("Reed switch activated - Clearing Bluetooth bonds");
+    
+    // Clear all Bluetooth bonds
+    zmk_ble_clear_bonds();
+    
+    LOG_WRN("All Bluetooth bonds cleared! Device will restart advertising.");
 }
 
 /**
