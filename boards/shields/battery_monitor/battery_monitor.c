@@ -418,7 +418,7 @@ static void reed_switch_handler(const struct device *dev,
                 LOG_WRN("========================================");
                 
                 // Use ZMK's bond clearing function (returns void)
-                zmk_ble_clear_bonds();
+                //zmk_ble_clear_bonds();
                 
                 LOG_WRN("All Bluetooth bonds cleared successfully");
                 LOG_WRN("Device will restart advertising as unpaired");
