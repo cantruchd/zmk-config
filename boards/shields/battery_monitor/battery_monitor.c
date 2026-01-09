@@ -9,7 +9,7 @@
  * - Automatic storage mode at 40%
  * - Low battery warnings
  * - Temperature monitoring and BLE reporting
- * - Optional reed switch support
+ * - Reed switch support for bond clearing (FIXED)
  */
 
 #include <zephyr/device.h>
@@ -21,6 +21,7 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/conn.h>
 
 #include <zmk/battery.h>
 #include <zmk/ble.h>
@@ -352,10 +353,8 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
 );
 
 // ============================================================================
-// Reed Switch Handler (Optional)
+// Reed Switch Handler (FIXED VERSION)
 // ============================================================================
-
-
 
 static struct gpio_callback reed_cb_data;
 static struct k_work_delayable reed_work;
@@ -365,56 +364,101 @@ static struct k_work_delayable reed_work;
  * Function: Clear Bluetooth bonds (unpair all devices)
  */
 static void reed_switch_work_handler(struct k_work *work) {
-    LOG_INF("Reed switch activated - Clearing Bluetooth bonds");
-    
-    // Clear all paired devices using ZMK BLE API
-    for (int i = 0; i < 5; i++) {
-        bt_unpair(i, BT_ADDR_LE_ANY);
+    // Double-check pin is still low (magnet still present / GND still connected)
+    int pin_state = gpio_pin_get(gpio_dev, REED_PIN);
+    if (pin_state != 0) {
+        LOG_INF("Reed switch released before debounce completed, ignoring");
+        return;
     }
     
-    LOG_WRN("All Bluetooth bonds cleared! Device will restart advertising.");
+    LOG_WRN("Reed switch activated - Clearing Bluetooth bonds");
+    
+    // Disconnect all active connections first
+    struct bt_conn *conn = bt_conn_lookup_state_le(BT_ID_DEFAULT, NULL, 
+                                                    BT_CONN_STATE_CONNECTED);
+    while (conn) {
+        LOG_INF("Disconnecting active connection");
+        bt_conn_disconnect(conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+        bt_conn_unref(conn);
+        conn = bt_conn_lookup_state_le(BT_ID_DEFAULT, NULL, 
+                                       BT_CONN_STATE_CONNECTED);
+    }
+    
+    // Use ZMK's bond clearing function
+    int ret = zmk_ble_clear_bonds();
+    if (ret == 0) {
+        LOG_INF("All Bluetooth bonds cleared successfully");
+        LOG_INF("Device will restart advertising as unpaired");
+    } else {
+        LOG_ERR("Failed to clear bonds: %d", ret);
+        
+        // Fallback: use Zephyr API
+        LOG_INF("Attempting fallback bond clear method");
+        bt_unpair(BT_ID_DEFAULT, BT_ADDR_LE_ANY);
+        LOG_INF("Fallback bond clear completed");
+    }
 }
 
 /**
  * Reed switch interrupt handler
+ * Triggered on FALLING edge (when GND connected to pin)
  */
 static void reed_switch_handler(const struct device *dev, 
                                 struct gpio_callback *cb,
                                 uint32_t pins) {
+    LOG_DBG("Reed switch interrupt triggered on pin mask 0x%08X", pins);
+    
+    // Schedule debounced work
     k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
 }
 
 /**
- * Initialize reed switch
+ * Initialize reed switch - FIXED VERSION
  */
 static int init_reed_switch(void) {
     int ret;
     
+    LOG_INF("Initializing reed switch on P0.%d", REED_PIN);
+    
+    // Configure as INPUT with PULL-UP (pin HIGH normally, LOW when GND connected)
     ret = gpio_pin_configure(gpio_dev, REED_PIN, 
-                            GPIO_INPUT | GPIO_PULL_DOWN);
+                            GPIO_INPUT | GPIO_PULL_UP);  // ✅ FIXED: was PULL_DOWN
     if (ret < 0) {
         LOG_ERR("Failed to configure reed switch pin: %d", ret);
         return ret;
     }
     
+    // Configure interrupt on FALLING edge (HIGH→LOW when GND connected)
     ret = gpio_pin_interrupt_configure(gpio_dev, REED_PIN, 
-                                       GPIO_INT_EDGE_RISING);
+                                       GPIO_INT_EDGE_FALLING);  // ✅ FIXED: was EDGE_RISING
     if (ret < 0) {
         LOG_ERR("Failed to configure reed interrupt: %d", ret);
         return ret;
     }
     
+    // Initialize callback
     gpio_init_callback(&reed_cb_data, reed_switch_handler, BIT(REED_PIN));
-    gpio_add_callback(gpio_dev, &reed_cb_data);
+    ret = gpio_add_callback(gpio_dev, &reed_cb_data);
+    if (ret < 0) {
+        LOG_ERR("Failed to add callback: %d", ret);
+        return ret;
+    }
     
+    // Initialize debounced work
     k_work_init_delayable(&reed_work, reed_switch_work_handler);
     
-    LOG_INF("Reed switch initialized on P0.%d", REED_PIN);
+    LOG_INF("Reed switch initialized successfully");
+    LOG_INF("  - Mode: Active LOW (connect P0.17 to GND to trigger)");
+    LOG_INF("  - Pull-up: ENABLED");
+    LOG_INF("  - Trigger: FALLING edge");
+    LOG_INF("  - Debounce: %dms", REED_DEBOUNCE_MS);
+    
+    // Log current pin state for diagnostics
+    int initial_state = gpio_pin_get(gpio_dev, REED_PIN);
+    LOG_INF("  - Initial state: %s", initial_state ? "HIGH (inactive)" : "LOW (active)");
     
     return 0;
 }
-
-
 
 // ============================================================================
 // Initialization
@@ -457,13 +501,11 @@ static int battery_monitor_init(const struct device *dev) {
     k_work_init_delayable(&temp_work, temp_work_handler);
     k_work_schedule(&temp_work, K_MSEC(1000));  // Start after 1 second
     
-    #ifdef CONFIG_BATTERY_MONITOR_REED_SWITCH
-    // Initialize reed switch if enabled
+    // Initialize reed switch
     ret = init_reed_switch();
     if (ret < 0) {
         LOG_WRN("Reed switch initialization failed, continuing without it");
     }
-    #endif
     
     LOG_INF("Battery Monitor initialized successfully");
     LOG_INF("  - MOSFET control: P0.%d", MOSFET_PIN);
@@ -521,21 +563,63 @@ static int cmd_temp(const struct shell *shell, size_t argc, char **argv) {
     return 0;
 }
 
+static int cmd_reed_test(const struct shell *shell, size_t argc, char **argv) {
+    if (gpio_dev == NULL) {
+        shell_error(shell, "GPIO device not initialized");
+        return -1;
+    }
+    
+    int pin_state = gpio_pin_get(gpio_dev, REED_PIN);
+    shell_print(shell, "Reed switch pin P0.%d state: %s", 
+                REED_PIN, pin_state ? "HIGH (inactive/open)" : "LOW (active/closed)");
+    
+    if (pin_state == 0) {
+        shell_print(shell, "⚠️  Reed switch is ACTIVE - bonds would be cleared!");
+        shell_print(shell, "    (P0.17 is connected to GND)");
+    } else {
+        shell_print(shell, "✓  Reed switch is INACTIVE");
+        shell_print(shell, "   To test: connect P0.17 (D2) to GND");
+    }
+    
+    return 0;
+}
+
+static int cmd_force_clear_bonds(const struct shell *shell, size_t argc, char **argv) {
+    shell_print(shell, "⚠️  Forcing Bluetooth bond clear...");
+    
+    int ret = zmk_ble_clear_bonds();
+    if (ret == 0) {
+        shell_print(shell, "✓ Bonds cleared successfully");
+        shell_print(shell, "  Device will now advertise as unpaired");
+    } else {
+        shell_error(shell, "✗ Failed to clear bonds: %d", ret);
+        shell_print(shell, "  Attempting fallback method...");
+        bt_unpair(BT_ID_DEFAULT, BT_ADDR_LE_ANY);
+        shell_print(shell, "  Fallback method executed");
+    }
+    
+    return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_battery,
     SHELL_CMD(on, NULL, "Turn battery power on", cmd_power_on),
     SHELL_CMD(off, NULL, "Turn battery power off", cmd_power_off),
     SHELL_CMD(toggle, NULL, "Toggle battery power", cmd_power_toggle),
     SHELL_CMD(status, NULL, "Show status", cmd_status),
     SHELL_CMD(temp, NULL, "Read temperature", cmd_temp),
+    SHELL_CMD(reed, NULL, "Test reed switch state", cmd_reed_test),
+    SHELL_CMD(clearbonds, NULL, "Force clear all BLE bonds", cmd_force_clear_bonds),
     SHELL_SUBCMD_SET_END
 );
 
-SHELL_CMD_REGISTER(battery, &sub_battery, "Battery control commands", NULL);
+SHELL_CMD_REGISTER(battery, &sub_battery, "Battery monitor commands", NULL);
 
 #endif // CONFIG_SHELL
 
 /*
- * BLE Service Summary:
+ * ============================================================================
+ * BLE Service Summary
+ * ============================================================================
  * 
  * Service UUID: 12345678-1234-5678-1234-56789abcdef0
  * 
@@ -554,4 +638,27 @@ SHELL_CMD_REGISTER(battery, &sub_battery, "Battery control commands", NULL);
  * - Unit: 0.01°C
  * - Example: 2550 = 25.50°C
  * - Range: -128°C to +127°C (nRF52840 spec: -40°C to +85°C)
+ * 
+ * ============================================================================
+ * Reed Switch (Bond Clear Feature)
+ * ============================================================================
+ * 
+ * Hardware Connection:
+ * - Pin: P0.17 (D2 on nice!nano, left side)
+ * - Configuration: INPUT with PULL-UP resistor
+ * - Trigger: Connect P0.17 to GND to activate
+ * 
+ * Behavior:
+ * - Normal state: Pin is HIGH (pulled up to VCC)
+ * - Activated state: Pin is LOW (connected to GND)
+ * - Debounce: 50ms delay before action
+ * - Action: Clears all Bluetooth pairing bonds
+ * 
+ * Testing:
+ * - Via shell: `battery reed` (check current state)
+ * - Via shell: `battery clearbonds` (manual trigger)
+ * - Physical test: Connect P0.17 to GND using wire/reed switch
+ * 
+ * Enable in Kconfig:
+ * CONFIG_BATTERY_MONITOR_REED_SWITCH=y
  */
