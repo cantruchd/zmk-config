@@ -547,11 +547,21 @@ static void reed_switch_handler(const struct device *dev,
         LOG_WRN("Reed switch trigger #%u (pin LOW detected)", reed_trigger_count);
         
         LOG_DBG("Clearing bond clear - reed switch pin HIGH detected");
+        k_sleep(K_MSEC(200));
         zmk_ble_clear_bonds();
+
+        k_sleep(K_MSEC(500));
+        sys_reboot(SYS_REBOOT_COLD);  // BẮT BUỘC PHẢI REBOOT
+
+
     } else {
         // RISING edge - ignore
         LOG_DBG("Clearing bond clear - reed switch pin HIGH detected");
+        k_sleep(K_MSEC(200));
         zmk_ble_clear_bonds();
+
+        k_sleep(K_MSEC(500));
+        sys_reboot(SYS_REBOOT_COLD);  // BẮT BUỘC PHẢI REBOOT
     }
 }
 
