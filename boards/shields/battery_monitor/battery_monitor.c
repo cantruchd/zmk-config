@@ -550,6 +550,8 @@ static void reed_switch_handler(const struct device *dev,
         k_sleep(K_MSEC(200));
         //zmk_ble_clear_bonds();
 
+        zmk_ble_unpair_current_profile();
+
         k_sleep(K_MSEC(500));
         sys_reboot(SYS_REBOOT_COLD);  // BẮT BUỘC PHẢI REBOOT
 
@@ -559,6 +561,8 @@ static void reed_switch_handler(const struct device *dev,
         LOG_DBG("Clearing bond clear - reed switch pin HIGH detected");
         k_sleep(K_MSEC(200));
         //zmk_ble_clear_bonds();
+
+        zmk_ble_unpair_current_profile();
 
         k_sleep(K_MSEC(500));
         sys_reboot(SYS_REBOOT_COLD);  // BẮT BUỘC PHẢI REBOOT
