@@ -9,8 +9,9 @@
  * - Automatic storage mode at 40%
  * - Low battery warnings
  * - Temperature monitoring and BLE reporting
- * - Voltage monitoring and BLE reporting (NEW)
+ * - Voltage monitoring and BLE reporting
  * - Reed switch support for bond clearing
+ * - Smart power saving: Auto-updates 30min after first read, then stops
  */
 
 #include <zephyr/device.h>
@@ -44,12 +45,12 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define LOW_WARNING         35  // Warning at 35%
 #define CRITICAL_LOW        20  // Critical at 20%
 
-// Temperature update interval (milliseconds)
-#define TEMP_UPDATE_INTERVAL_MS  10000  // 10 seconds
+// Update intervals
+#define UPDATE_INTERVAL_MS      10000   // 10 seconds between updates
+#define AUTO_UPDATE_DURATION_MS 1800000 // 30 minutes (30 * 60 * 1000)
 
 // Reed switch debounce time (milliseconds)
-#define REED_DEBOUNCE_MS    50
-#define REED_MIN_LOW_US     0  // Minimum LOW pulse duration
+#define REED_DEBOUNCE_MS    200   // Increased to 200ms for better stability
 
 // ============================================================================
 // BLE Service and Characteristic UUIDs
@@ -76,7 +77,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define BT_UUID_CUSTOM_TEMP \
     BT_UUID_DECLARE_128(BT_UUID_CUSTOM_TEMP_VAL)
 
-// Voltage characteristic UUID (NEW)
+// Voltage characteristic UUID
 #define BT_UUID_VOLTAGE_VAL \
     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef3)
 
@@ -94,14 +95,18 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static const struct device *gpio_dev;
 static const struct device *temp_dev;
-static const struct device *battery_dev;  // NEW: Battery sensor device
+static const struct device *battery_dev;
 static bool power_state = false;
 static uint8_t last_battery_percent = 100;
 static int16_t current_temperature = 0;  // Temperature in 0.01°C
-static uint16_t current_voltage_mv = 0;  // NEW: Voltage in millivolts
-static struct k_work_delayable temp_work;
+static uint16_t current_voltage_mv = 0;  // Voltage in millivolts
 
-// NEW: Channel discovery (like reference code)
+// Auto-update state management
+static bool auto_update_active = false;
+static int64_t auto_update_start_time = 0;
+static struct k_work_delayable update_work;
+
+// Channel discovery
 static enum sensor_channel discovered_channel = SENSOR_CHAN_PRIV_START;
 
 // Forward declaration of GATT service
@@ -123,7 +128,47 @@ static ssize_t read_voltage(struct bt_conn *conn,
                              void *buf, uint16_t len, uint16_t offset);
 
 // ============================================================================
-// Battery Voltage Reading (Based on reference code)
+// Auto-Update Management
+// ============================================================================
+
+/**
+ * Start or restart the 30-minute auto-update timer
+ */
+static void start_auto_updates(void) {
+    if (!auto_update_active) {
+        auto_update_active = true;
+        auto_update_start_time = k_uptime_get();
+        LOG_INF("Auto-updates STARTED - will run for 30 minutes");
+    } else {
+        // Reset timer if already active
+        auto_update_start_time = k_uptime_get();
+        LOG_DBG("Auto-update timer RESET");
+    }
+}
+
+/**
+ * Check if auto-updates should still be active
+ * @return true if within 30-minute window, false otherwise
+ */
+static bool should_auto_update(void) {
+    if (!auto_update_active) {
+        return false;
+    }
+    
+    int64_t elapsed_ms = k_uptime_get() - auto_update_start_time;
+    
+    if (elapsed_ms >= AUTO_UPDATE_DURATION_MS) {
+        auto_update_active = false;
+        LOG_INF("Auto-updates STOPPED - 30 minutes elapsed");
+        LOG_INF("Power saving mode: Updates disabled until next read");
+        return false;
+    }
+    
+    return true;
+}
+
+// ============================================================================
+// Battery Voltage Reading
 // ============================================================================
 
 /**
@@ -160,7 +205,7 @@ static void read_battery_voltage(void) {
         for (int i = 0; i < ARRAY_SIZE(candidates); i++) {
             rc = sensor_channel_get(battery_dev, candidates[i], &voltage);
             if (rc == 0) {
-                discovered_channel = candidates[i]; // Remember this channel
+                discovered_channel = candidates[i];
                 LOG_INF("Voltage channel discovered: index %d", i);
                 break;
             }
@@ -218,28 +263,48 @@ static int16_t read_temp_sensor(void) {
 }
 
 /**
- * Temperature and Voltage update work handler
- * Periodically reads temp + voltage and updates BLE characteristics
+ * Update all sensor values and notify BLE clients
  */
-static void temp_work_handler(struct k_work *work) {
+static void update_all_sensors(void) {
     // Read temperature
     current_temperature = read_temp_sensor();
     float temp_float = current_temperature / 100.0f;
     LOG_INF("Temperature: %.2f°C", temp_float);
     
-    // Read voltage (NEW)
+    // Read voltage
     read_battery_voltage();
     
     // Notify BLE clients about temperature change
     bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], 
                    &current_temperature, sizeof(current_temperature));
     
-    // Notify BLE clients about voltage change (NEW)
+    // Notify BLE clients about voltage change
     bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], 
                    &current_voltage_mv, sizeof(current_voltage_mv));
+}
+
+/**
+ * Periodic update work handler
+ * Only runs when auto-updates are active (within 30min window)
+ */
+static void update_work_handler(struct k_work *work) {
+    if (!should_auto_update()) {
+        // 30 minutes elapsed, stop updates
+        return;
+    }
+    
+    // Update all sensors
+    update_all_sensors();
+    
+    // Calculate remaining time
+    int64_t elapsed_ms = k_uptime_get() - auto_update_start_time;
+    int64_t remaining_ms = AUTO_UPDATE_DURATION_MS - elapsed_ms;
+    int remaining_min = remaining_ms / 60000;
+    
+    LOG_DBG("Auto-update running (%d min remaining)", remaining_min);
     
     // Schedule next update
-    k_work_reschedule(&temp_work, K_MSEC(TEMP_UPDATE_INTERVAL_MS));
+    k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
 }
 
 // ============================================================================
@@ -341,6 +406,10 @@ static ssize_t read_power_control(struct bt_conn *conn,
                                    const struct bt_gatt_attr *attr,
                                    void *buf, uint16_t len, uint16_t offset) {
     uint8_t status = power_state ? 0x01 : 0x00;
+    
+    // Trigger auto-updates on any characteristic read
+    start_auto_updates();
+    
     return bt_gatt_attr_read(conn, attr, buf, len, offset, &status, sizeof(status));
 }
 
@@ -380,16 +449,35 @@ static ssize_t write_power_control(struct bt_conn *conn,
 static ssize_t read_temperature(struct bt_conn *conn,
                                  const struct bt_gatt_attr *attr,
                                  void *buf, uint16_t len, uint16_t offset) {
+    LOG_INF("Temperature read by host - starting auto-updates");
+    
+    // Update immediately
+    current_temperature = read_temp_sensor();
+    
+    // Start auto-update timer
+    start_auto_updates();
+    if (!k_work_delayable_is_pending(&update_work)) {
+        k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
+    }
+    
     return bt_gatt_attr_read(conn, attr, buf, len, offset, 
                             &current_temperature, sizeof(current_temperature));
 }
 
-/**
- * Read handler for voltage characteristic (NEW)
- */
 static ssize_t read_voltage(struct bt_conn *conn,
                              const struct bt_gatt_attr *attr,
                              void *buf, uint16_t len, uint16_t offset) {
+    LOG_INF("Voltage read by host - starting auto-updates");
+    
+    // Update immediately
+    read_battery_voltage();
+    
+    // Start auto-update timer
+    start_auto_updates();
+    if (!k_work_delayable_is_pending(&update_work)) {
+        k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
+    }
+    
     return bt_gatt_attr_read(conn, attr, buf, len, offset, 
                             &current_voltage_mv, sizeof(current_voltage_mv));
 }
@@ -414,7 +502,7 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
                           read_temperature, NULL, NULL),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
     
-    // Voltage characteristic (read/notify) - NEW
+    // Voltage characteristic (read/notify)
     BT_GATT_CHARACTERISTIC(BT_UUID_VOLTAGE,
                           BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
                           BT_GATT_PERM_READ,
@@ -428,7 +516,7 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
 
 static struct gpio_callback reed_cb_data;
 static struct k_work_delayable reed_work;
-static volatile uint32_t reed_low_timestamp = 0;
+static volatile uint32_t reed_trigger_count = 0;
 
 static void reed_switch_work_handler(struct k_work *work) {
     LOG_INF("Reed work handler - executing bond clear");
@@ -450,30 +538,20 @@ static void reed_switch_work_handler(struct k_work *work) {
 static void reed_switch_handler(const struct device *dev, 
                                 struct gpio_callback *cb,
                                 uint32_t pins) {
+    // Read current pin state immediately
     int pin_state = gpio_pin_get(gpio_dev, REED_PIN);
-    uint32_t now = k_cycle_get_32();
     
     if (pin_state == 0) {
-        LOG_WRN("Reed switch activated (FALLING edge)");
-        reed_low_timestamp = now;
+        // FALLING edge - pin went LOW (GND connected)
+        reed_trigger_count++;
+        LOG_WRN("Reed switch trigger #%u (pin LOW detected)", reed_trigger_count);
+        
+        // Schedule bond clear with debounce
+        LOG_INF("Scheduling bond clear with %dms debounce", REED_DEBOUNCE_MS);
+        k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
     } else {
-        if (reed_low_timestamp != 0) {
-            uint32_t cycles = now - reed_low_timestamp;
-            uint32_t us = k_cyc_to_us_floor32(cycles);
-            LOG_INF("Reed switch deactivated after %u us", us);
-            
-            if (us >= REED_MIN_LOW_US) {
-                LOG_WRN("Reed switch held long enough (%u us >= %u us)", 
-                        us, REED_MIN_LOW_US);
-                LOG_INF("Scheduling bond clear with %dms debounce", REED_DEBOUNCE_MS);
-                k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
-            } else {
-                LOG_INF("Reed switch pulse too short (%u us < %u us), ignoring", 
-                        us, REED_MIN_LOW_US);
-            }
-            
-            reed_low_timestamp = 0;
-        }
+        // RISING edge - ignore
+        LOG_DBG("Reed switch RISING edge (pin HIGH), ignoring");
     }
 }
 
@@ -506,9 +584,8 @@ static int init_reed_switch(void) {
     LOG_INF("Reed switch initialized successfully");
     LOG_INF("  - Mode: Active LOW (connect P0.17 to GND to trigger)");
     LOG_INF("  - Pull-up: ENABLED");
-    LOG_INF("  - Trigger: BOTH edges (measures LOW pulse width)");
-    LOG_INF("  - Minimum pulse: %u us", REED_MIN_LOW_US);
-    LOG_INF("  - Debounce: %dms", REED_DEBOUNCE_MS);
+    LOG_INF("  - Trigger: BOTH edges (only LOW is processed)");
+    LOG_INF("  - Debounce: %dms (prevents multiple triggers)", REED_DEBOUNCE_MS);
     
     int initial_state = gpio_pin_get(gpio_dev, REED_PIN);
     LOG_INF("  - Initial state: %s", initial_state ? "HIGH (inactive)" : "LOW (active)");
@@ -540,7 +617,7 @@ static int battery_monitor_init(const struct device *dev) {
         return -ENODEV;
     }
     
-    // Get battery sensor device (NEW)
+    // Get battery sensor device
     battery_dev = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
     if (!device_is_ready(battery_dev)) {
         LOG_WRN("Battery voltage sensor not ready");
@@ -558,9 +635,8 @@ static int battery_monitor_init(const struct device *dev) {
     
     set_power_state(false);
     
-    // Initialize temperature and voltage monitoring
-    k_work_init_delayable(&temp_work, temp_work_handler);
-    k_work_schedule(&temp_work, K_MSEC(1000));
+    // Initialize update work (starts inactive)
+    k_work_init_delayable(&update_work, update_work_handler);
     
     // Initialize reed switch
     ret = init_reed_switch();
@@ -575,6 +651,9 @@ static int battery_monitor_init(const struct device *dev) {
     LOG_INF("  - Critical: %d%%", CRITICAL_LOW);
     LOG_INF("  - Temperature sensor: enabled");
     LOG_INF("  - Voltage sensor: %s", battery_dev ? "enabled" : "disabled");
+    LOG_INF("  - Power saving: Auto-updates disabled (activate by reading)");
+    LOG_INF("  - Update interval: %d seconds", UPDATE_INTERVAL_MS / 1000);
+    LOG_INF("  - Auto-update duration: 30 minutes");
     
     return 0;
 }
@@ -608,16 +687,29 @@ static int cmd_power_toggle(const struct shell *shell, size_t argc, char **argv)
 }
 
 static int cmd_status(const struct shell *shell, size_t argc, char **argv) {
-    shell_print(shell, "Battery power is currently %s", 
-                power_state ? "ON" : "OFF");
-    shell_print(shell, "Last battery reading: %d%%", last_battery_percent);
+    shell_print(shell, "=== Battery Monitor Status ===");
+    shell_print(shell, "Power state: %s", power_state ? "ON" : "OFF");
+    shell_print(shell, "Battery: %d%%", last_battery_percent);
     
     float temp_float = current_temperature / 100.0f;
-    shell_print(shell, "Current temperature: %.2f°C", temp_float);
+    shell_print(shell, "Temperature: %.2f°C", temp_float);
     
-    // NEW: Show voltage
     float voltage_v = current_voltage_mv / 1000.0f;
-    shell_print(shell, "Current voltage: %.3f V (%u mV)", voltage_v, current_voltage_mv);
+    shell_print(shell, "Voltage: %.3f V (%u mV)", voltage_v, current_voltage_mv);
+    
+    shell_print(shell, "\n=== Auto-Update Status ===");
+    if (auto_update_active) {
+        int64_t elapsed_ms = k_uptime_get() - auto_update_start_time;
+        int64_t remaining_ms = AUTO_UPDATE_DURATION_MS - elapsed_ms;
+        int elapsed_min = elapsed_ms / 60000;
+        int remaining_min = remaining_ms / 60000;
+        shell_print(shell, "Status: ACTIVE");
+        shell_print(shell, "Elapsed: %d minutes", elapsed_min);
+        shell_print(shell, "Remaining: %d minutes", remaining_min);
+    } else {
+        shell_print(shell, "Status: INACTIVE (power saving)");
+        shell_print(shell, "To activate: Read any characteristic via BLE");
+    }
     
     return 0;
 }
@@ -666,15 +758,35 @@ static int cmd_force_clear_bonds(const struct shell *shell, size_t argc, char **
     return 0;
 }
 
+static int cmd_start_updates(const struct shell *shell, size_t argc, char **argv) {
+    shell_print(shell, "Manually starting auto-updates...");
+    start_auto_updates();
+    if (!k_work_delayable_is_pending(&update_work)) {
+        k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
+    }
+    shell_print(shell, "✓ Auto-updates started for 30 minutes");
+    return 0;
+}
+
+static int cmd_stop_updates(const struct shell *shell, size_t argc, char **argv) {
+    shell_print(shell, "Stopping auto-updates...");
+    auto_update_active = false;
+    k_work_cancel_delayable(&update_work);
+    shell_print(shell, "✓ Auto-updates stopped");
+    return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_battery,
     SHELL_CMD(on, NULL, "Turn battery power on", cmd_power_on),
     SHELL_CMD(off, NULL, "Turn battery power off", cmd_power_off),
     SHELL_CMD(toggle, NULL, "Toggle battery power", cmd_power_toggle),
-    SHELL_CMD(status, NULL, "Show status", cmd_status),
+    SHELL_CMD(status, NULL, "Show full status", cmd_status),
     SHELL_CMD(temp, NULL, "Read temperature", cmd_temp),
     SHELL_CMD(voltage, NULL, "Read battery voltage", cmd_voltage),
     SHELL_CMD(reed, NULL, "Test reed switch state", cmd_reed_test),
     SHELL_CMD(clearbonds, NULL, "Force clear all BLE bonds", cmd_force_clear_bonds),
+    SHELL_CMD(startupdates, NULL, "Start 30-min auto-updates", cmd_start_updates),
+    SHELL_CMD(stopupdates, NULL, "Stop auto-updates", cmd_stop_updates),
     SHELL_SUBCMD_SET_END
 );
 
@@ -697,11 +809,13 @@ SHELL_CMD_REGISTER(battery, &sub_battery, "Battery monitor commands", NULL);
  * 
  * 2. Temperature (12345678-1234-5678-1234-56789abcdef2)
  *    - Read: Get current temperature (int16_t in 0.01°C)
- *    - Notify: Updates every 10 seconds
+ *    - Notify: Updates every 10 seconds (when auto-update active)
+ *    - Reading triggers 30-minute auto-update period
  * 
- * 3. Voltage (12345678-1234-5678-1234-56789abcdef3) - NEW
+ * 3. Voltage (12345678-1234-5678-1234-56789abcdef3)
  *    - Read: Get current voltage (uint16_t in millivolts)
- *    - Notify: Updates every 10 seconds
+ *    - Notify: Updates every 10 seconds (when auto-update active)
+ *    - Reading triggers 30-minute auto-update period
  * 
  * Temperature Format:
  * - Value: int16_t (2 bytes, little-endian)
@@ -715,35 +829,26 @@ SHELL_CMD_REGISTER(battery, &sub_battery, "Battery monitor commands", NULL);
  * - Range: 3000-4200 mV (typical LiPo)
  * 
  * ============================================================================
- * Reed Switch (Bond Clear Feature)
+ * Power Saving Feature
  * ============================================================================
  * 
- * Hardware Connection:
- * - Pin: P0.17 (D2 on nice!nano, left side)
- * - Configuration: INPUT with PULL-
-
-/*
- * ============================================================================
- * BLE Service Summary
- * ============================================================================
+ * Auto-Update Behavior:
+ * - Default state: Updates DISABLED (power saving)
+ * - Trigger: Any BLE characteristic read from host
+ * - Duration: 30 minutes from last trigger
+ * - Update interval: 10 seconds during active period
+ * - After 30 min: Automatically stops to save battery
  * 
- * Service UUID: 12345678-1234-5678-1234-56789abcdef0
+ * Benefits:
+ * - Saves power when not actively monitored
+ * - Automatic activation when app connects
+ * - Long enough for typical monitoring sessions
+ * - Transparent to user (automatic)
  * 
- * Characteristics:
- * 1. Power Control (12345678-1234-5678-1234-56789abcdef1)
- *    - Read: Get current power state (0x00=OFF, 0x01=ON)
- *    - Write: Control power (0x00=OFF, 0x01=ON, 0x02=TOGGLE)
- *    - Notify: Notifies when power state changes
- * 
- * 2. Temperature (12345678-1234-5678-1234-56789abcdef2)
- *    - Read: Get current temperature (int16_t in 0.01°C)
- *    - Notify: Updates every 10 seconds
- * 
- * Temperature Format:
- * - Value is int16_t (2 bytes, little-endian)
- * - Unit: 0.01°C
- * - Example: 2550 = 25.50°C
- * - Range: -128°C to +127°C (nRF52840 spec: -40°C to +85°C)
+ * Manual Control (via shell):
+ * - battery startupdates - Force start 30-min updates
+ * - battery stopupdates - Immediately stop updates
+ * - battery status - Check auto-update status
  * 
  * ============================================================================
  * Reed Switch (Bond Clear Feature)
@@ -757,14 +862,26 @@ SHELL_CMD_REGISTER(battery, &sub_battery, "Battery monitor commands", NULL);
  * Behavior:
  * - Normal state: Pin is HIGH (pulled up to VCC)
  * - Activated state: Pin is LOW (connected to GND)
- * - Debounce: 50ms delay before action
- * - Action: Clears all Bluetooth pairing bonds
+ * - Debounce: 200ms delay before action
+ * - Action: Clears all Bluetooth pairing bonds + reboot
  * 
  * Testing:
  * - Via shell: `battery reed` (check current state)
  * - Via shell: `battery clearbonds` (manual trigger)
  * - Physical test: Connect P0.17 to GND using wire/reed switch
  * 
- * Enable in Kconfig:
- * CONFIG_BATTERY_MONITOR_REED_SWITCH=y
+ * ============================================================================
+ * Shell Commands Reference
+ * ============================================================================
+ * 
+ * battery on              - Turn MOSFET power ON
+ * battery off             - Turn MOSFET power OFF
+ * battery toggle          - Toggle MOSFET power
+ * battery status          - Show complete status (power, battery, temp, voltage, auto-update)
+ * battery temp            - Read current temperature
+ * battery voltage         - Read current battery voltage
+ * battery reed            - Test reed switch state
+ * battery clearbonds      - Force clear BLE bonds and reboot
+ * battery startupdates    - Manually start 30-minute auto-update
+ * battery stopupdates     - Stop auto-updates immediately
  */
