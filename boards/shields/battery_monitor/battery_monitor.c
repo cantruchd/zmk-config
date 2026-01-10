@@ -543,11 +543,11 @@ static void reed_switch_handler(const struct device *dev,
     
     if (pin_state == 0) {
         // FALLING edge - pin went LOW (GND connected)
-        reed_trigger_count++;
-        LOG_WRN("Reed switch trigger #%u (pin LOW detected)", reed_trigger_count);
+        
+        LOG_WRN("Reed switch trigger  (pin LOW detected)");
         
         LOG_DBG("Clearing bond clear - reed switch pin LOW detected");
-       
+        LOG_DBG("Scheduling reed work with %dms debounce", REED_DEBOUNCE_MS);
         k_work_schedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
         
         // k_sleep(K_MSEC(500));
@@ -557,6 +557,9 @@ static void reed_switch_handler(const struct device *dev,
     } else {
         // RISING edge - ignore
         LOG_DBG("Clearing bond clear - reed switch pin HIGH detected");
+
+        LOG_DBG("Scheduling reed work with %dms debounce", REED_DEBOUNCE_MS);
+        k_work_schedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
 
         // k_sleep(K_MSEC(200));
         // //zmk_ble_clear_bonds();
