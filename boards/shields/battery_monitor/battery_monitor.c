@@ -50,7 +50,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define AUTO_UPDATE_DURATION_MS 1800000 // 30 minutes (30 * 60 * 1000)
 
 // Reed switch debounce time (milliseconds)
-#define REED_DEBOUNCE_MS    100   // Increased to 100ms for better stability
+#define REED_DEBOUNCE_MS    1000   // Increased to 100ms for better stability
 
 // ============================================================================
 // BLE Service and Characteristic UUIDs
@@ -548,7 +548,7 @@ static void reed_switch_handler(const struct device *dev,
         
         LOG_DBG("Clearing bond clear - reed switch pin LOW detected");
        
-
+        k_work_schedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
         
         // k_sleep(K_MSEC(500));
         // sys_reboot(SYS_REBOOT_COLD);  // BẮT BUỘC PHẢI REBOOT
@@ -557,8 +557,7 @@ static void reed_switch_handler(const struct device *dev,
     } else {
         // RISING edge - ignore
         LOG_DBG("Clearing bond clear - reed switch pin HIGH detected");
-        k_sleep(K_MSEC(200));
-        zmk_ble_clear_all_bonds();
+
         // k_sleep(K_MSEC(200));
         // //zmk_ble_clear_bonds();
 
