@@ -551,7 +551,7 @@ static void reed_switch_handler(const struct device *dev,
         //zmk_ble_clear_bonds();
 
         // Xóa tất cả bonds (low-level)
-        bt_unpair(BT_ID_DEFAULT, NULL);
+        zmk_ble_clear_all_bonds();
 
         k_sleep(K_MSEC(500));
         sys_reboot(SYS_REBOOT_COLD);  // BẮT BUỘC PHẢI REBOOT
