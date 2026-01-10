@@ -525,7 +525,7 @@ static void reed_switch_work_handler(struct k_work *work) {
     LOG_WRN("Clearing all Bluetooth bonds!");
     LOG_WRN("========================================");
     
-    zmk_ble_clear_bonds();
+    zmk_ble_clear_all_bonds();
     
     LOG_WRN("All Bluetooth bonds cleared successfully");
     LOG_WRN("Rebooting device to restart advertising...");
