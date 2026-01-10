@@ -50,7 +50,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define AUTO_UPDATE_DURATION_MS 1800000 // 30 minutes (30 * 60 * 1000)
 
 // Reed switch debounce time (milliseconds)
-#define REED_DEBOUNCE_MS    200   // Increased to 200ms for better stability
+#define REED_DEBOUNCE_MS    100   // Increased to 100ms for better stability
 
 // ============================================================================
 // BLE Service and Characteristic UUIDs
@@ -531,8 +531,8 @@ static void reed_switch_work_handler(struct k_work *work) {
     LOG_WRN("Rebooting device to restart advertising...");
     LOG_WRN("========================================");
     
-    k_sleep(K_MSEC(200));
-    sys_reboot(SYS_REBOOT_COLD);
+    // k_sleep(K_MSEC(200));
+    // sys_reboot(SYS_REBOOT_COLD);
 }
 
 static void reed_switch_handler(const struct device *dev, 
@@ -546,12 +546,12 @@ static void reed_switch_handler(const struct device *dev,
         reed_trigger_count++;
         LOG_WRN("Reed switch trigger #%u (pin LOW detected)", reed_trigger_count);
         
-        // Schedule bond clear with debounce
-        LOG_INF("Scheduling bond clear with %dms debounce", REED_DEBOUNCE_MS);
-        k_work_reschedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
+        LOG_DBG("Clearing bond clear - reed switch pin HIGH detected");
+        zmk_ble_clear_bonds();
     } else {
         // RISING edge - ignore
-        LOG_DBG("Reed switch RISING edge (pin HIGH), ignoring");
+        LOG_DBG("Clearing bond clear - reed switch pin HIGH detected");
+        zmk_ble_clear_bonds();
     }
 }
 
