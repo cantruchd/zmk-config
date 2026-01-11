@@ -32,4 +32,4 @@ include:
   
   - board: nice_nano_v2
     shield: battery_monitor
-    # snippet: zmk-usb-logging
+    snippet: zmk-usb-logging
