@@ -204,7 +204,7 @@ static void read_battery_voltage(void) {
             rc = sensor_channel_get(battery, candidates[i], &voltage);
             if (rc == 0) {
                 discovered_channel = candidates[i]; // Ghi nhớ channel này
-                sprintf(logtext, "Ch %d", i + 1); // Ghi log channel tìm được
+          
                 break;
             }
         }
