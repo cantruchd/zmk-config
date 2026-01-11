@@ -171,18 +171,16 @@ static bool should_auto_update(void) {
 // Battery Voltage Reading
 // ============================================================================
 
-/**
- * Read battery voltage from ZMK battery sensor
- * Uses channel discovery like the reference code
- */
 static void read_battery_voltage(void) {
-    if (battery_dev == NULL || !device_is_ready(battery_dev)) {
+    const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
+    
+    if (!device_is_ready(battery)) {
         LOG_WRN("Battery sensor not ready");
         return;
     }
 
-    // 1. Fetch sample from sensor
-    int rc = sensor_sample_fetch(battery_dev);
+    // 1. Lấy mẫu dữ liệu từ cảm biến (Fetch)
+    int rc = sensor_sample_fetch(battery);
     if (rc != 0) {
         LOG_WRN("Failed to fetch battery: %d", rc);
         return;
@@ -190,11 +188,11 @@ static void read_battery_voltage(void) {
 
     struct sensor_value voltage;
 
-    // 2. If we already know the correct channel, use it directly
+    // 2. Nếu đã biết channel đúng, lấy trực tiếp luôn
     if (discovered_channel != SENSOR_CHAN_PRIV_START) {
-        rc = sensor_channel_get(battery_dev, discovered_channel, &voltage);
+        rc = sensor_channel_get(battery, discovered_channel, &voltage);
     } 
-    // 3. Otherwise, discover the correct channel (first run)
+    // 3. Nếu chưa biết (lần đầu chạy), tiến hành dò tìm
     else {
         static const enum sensor_channel candidates[] = {
             SENSOR_CHAN_VOLTAGE,
@@ -203,23 +201,22 @@ static void read_battery_voltage(void) {
         };
 
         for (int i = 0; i < ARRAY_SIZE(candidates); i++) {
-            rc = sensor_channel_get(battery_dev, candidates[i], &voltage);
+            rc = sensor_channel_get(battery, candidates[i], &voltage);
             if (rc == 0) {
-                discovered_channel = candidates[i];
-                LOG_INF("Voltage channel discovered: index %d", i);
+                discovered_channel = candidates[i]; // Ghi nhớ channel này
+                sprintf(logtext, "Ch %d", i + 1); // Ghi log channel tìm được
                 break;
             }
         }
     }
 
-    // 4. Process the result
+    // 4. Xử lý kết quả cuối cùng
     if (rc == 0) {
-        // Calculate mV: val1 (Volts), val2 (Microvolts)
+        // Tính toán mV: val1 (Volts), val2 (Microvolts)
         current_voltage_mv = (voltage.val1 * 1000) + (voltage.val2 / 1000);
         
-        LOG_INF("Voltage: %d mV (%.3f V)", 
-                current_voltage_mv, 
-                current_voltage_mv / 1000.0f);
+        // Chỉ log khi cần thiết để tránh tràn log buffer
+        LOG_INF("Voltage: %d mV", current_voltage_mv);
     } else {
         LOG_ERR("No valid voltage channel found");
         current_voltage_mv = 0;
