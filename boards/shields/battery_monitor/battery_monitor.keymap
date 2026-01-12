@@ -14,18 +14,16 @@
 
 / {
     behaviors {
-        /*
-         * Custom hold-tap behavior for bond clearing
-         * Requires 2 second hold to clear bonds
-         */
-        bond_clear: bond_clear {
+        bond_clear_hold: bond_clear_hold {
             compatible = "zmk,behavior-hold-tap";
-            label = "BOND_CLEAR";
+            label = "BOND_CLEAR_HOLD";
             #binding-cells = <2>;
+            flavor = "tap-preferred";
             tapping-term-ms = <2000>;
-            flavor = "hold-preferred";
-            bindings = <&bt>, <&kp>;
+            bindings = <&bt>, <&trans>;
         };
+        
+  
     };
 
     keymap {
@@ -33,7 +31,7 @@
 
         default_layer {
             bindings = <
-                &bond_clear BT_CLR 0
+                &bond_clear_hold BT_CLR 0
             >;
         };
     };
@@ -41,8 +39,8 @@
 
 /*
  * Button behavior:
- * - Press and hold for 2 seconds: Clear all Bluetooth bonds and reset connections
- * - Short press (< 2 seconds): Does nothing (sends key code 0)
+ * - Press briefly (< 2 seconds): Does nothing
+ * - Hold for 2+ seconds: Clear all Bluetooth bonds
  * 
- * This prevents accidental bond clearing while allowing intentional reset
+ * This prevents accidental bond clearing
  */
