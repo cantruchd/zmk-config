@@ -40,11 +40,8 @@
      * Each board automatically monitors its connected cell (3.0-4.2V)
      * No external voltage divider needed!
      */
-       vbatt: vbatt {
-        compatible = "zmk,battery-voltage-divider";
-        io-channels = <&adc 2>;
-        output-ohms = <2000000>;
-        full-ohms = <(2000000 + 806000)>;
+    vbatt: vbatt {
+        compatible = "zmk,battery-nrf-vddh";
     };
 
     /*
