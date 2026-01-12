@@ -24,7 +24,7 @@
             #binding-cells = <2>;
             tapping-term-ms = <2000>;
             flavor = "hold-preferred";
-            bindings = <&bt>, <&none>;
+            bindings = <&bt>, <&kp>;
         };
     };
 
@@ -42,7 +42,7 @@
 /*
  * Button behavior:
  * - Press and hold for 2 seconds: Clear all Bluetooth bonds and reset connections
- * - Short press (< 2 seconds): Does nothing
+ * - Short press (< 2 seconds): Does nothing (sends key code 0)
  * 
  * This prevents accidental bond clearing while allowing intentional reset
  */
