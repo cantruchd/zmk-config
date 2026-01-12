@@ -4,8 +4,8 @@
  * 
  * Location: config/boards/shields/battery_monitor/battery_monitor.keymap
  * 
- * Single button functionality:
- * - Hold 2 seconds: Clear all Bluetooth bonds
+ * Single key: Bond clear button on P0.17 (D2)
+ * Press to clear all Bluetooth bonds and reboot
  */
 
 #include <behaviors.dtsi>
@@ -13,33 +13,36 @@
 #include <dt-bindings/zmk/bt.h>
 
 / {
-    behaviors {
-        new_behavior: new_behavior {
-            compatible = "zmk,behavior-hold-tap";
-            label = "NEW_BEHAVIOR";
-            bindings = <&none>, <&none>;
-
-            #binding-cells = <2>;
-            tapping-term-ms = <2000>;
-        };
-    };
-
     keymap {
         compatible = "zmk,keymap";
 
         default_layer {
-            bindings = 
-                <0          
-                >
-            ;
+            /*
+             * Single key layout:
+             * .-----------.
+             * | BT_CLR_ALL|  <- Press to clear all bonds + reboot
+             * '-----------'
+             */
+            bindings = <
+                &trans
+            >;
         };
     };
 };
 
 /*
- * Button behavior:
- * - Press briefly (< 2 seconds): Does nothing (transparent/no action)
- * - Hold for 2+ seconds: Clear all Bluetooth bonds and reset connections
+ * Usage:
+ * - Press the button connected to P0.17 (D2 pin)
+ * - All Bluetooth bonds will be cleared
+ * - Device will automatically reboot and start fresh advertising
  * 
- * This prevents accidental bond clearing while allowing intentional reset
+ * Hardware:
+ * - Connect momentary push button between P0.17 and GND
+ * - Internal pull-up resistor is enabled
+ * - Button press = LOW signal (active low)
+ * 
+ * Alternative: Reed Switch
+ * - Replace button with reed switch
+ * - Wave magnet near switch to trigger bond clear
+ * - Same pin (P0.17) and behavior
  */
