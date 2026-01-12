@@ -516,65 +516,79 @@ static struct k_work_delayable reed_work;
 static volatile uint32_t reed_trigger_count = 0;
 
 static volatile bool reed_active = false;
-static void reed_switch_work_handler(struct k_work *work) {
-    // Kiểm tra lại trạng thái pin - PHẢI vẫn LOW (được giữ)
-    int pin_state = gpio_pin_get(gpio_dev, REED_PIN);
+static struct k_work_delayable reed_debounce_work;
+static struct k_work_delayable reed_hold_work;
+static volatile bool reed_debouncing = false;
+static volatile int reed_stable_state = -1;
+
+/**
+ * Work handler - Kiểm tra lại sau debounce time
+ */
+static void reed_debounce_handler(struct k_work *work) {
+    int current_state = gpio_pin_get(gpio_dev, REED_PIN);
     
-    if (pin_state != 0) {
-        // Pin vẫn high sau 1 giây - xác nhận muốn clear bonds
-        LOG_WRN("========================================");
-        LOG_WRN("Reed switch held for 1 second - clearing bonds!");
-        LOG_WRN("========================================");
-        
-        // Clear all bonds
-        zmk_ble_clear_bonds();
-    
-        
-        LOG_WRN("Bonds cleared, waiting before reboot...");
-        //k_sleep(K_MSEC(500));
-        
-        // LOG_WRN("Rebooting device...");
-        // LOG_WRN("========================================");
-        // sys_reboot(SYS_REBOOT_COLD);
+    if (current_state == reed_stable_state) {
+        // Trạng thái ổn định, xử lý sự kiện
+        if (current_state == 0) {
+            // LOW - Reed switch activated (magnet gần)
+            LOG_INF("Reed switch ACTIVATED (debounced) - starting hold timer");
+            k_work_schedule(&reed_hold_work, K_MSEC(REED_HOLD_TIME_MS));
+        } else {
+            // HIGH - Reed switch deactivated
+            LOG_INF("Reed switch DEACTIVATED (debounced) - canceling hold timer");
+            k_work_cancel_delayable(&reed_hold_work);
+        }
     } else {
-        // Pin đã HIGH - đã thả ra trước 1 giây
-        LOG_INF("Reed switch released before 1 second - cancelled");
+        LOG_DBG("Reed state changed during debounce - noise rejected");
     }
     
-    reed_active = false;
+    reed_debouncing = false;
 }
 
+/**
+ * Work handler - Xác nhận giữ 1 giây
+ */
+static void reed_hold_handler(struct k_work *work) {
+    int current_state = gpio_pin_get(gpio_dev, REED_PIN);
+    
+    if (current_state == 0) {
+        // Vẫn LOW sau 1 giây - XÁC NHẬN xóa bond
+        LOG_WRN("========================================");
+        LOG_WRN("Reed switch HELD for 1 second - CLEARING BONDS!");
+        LOG_WRN("========================================");
+        
+        zmk_ble_clear_bonds();
+        
+        k_sleep(K_MSEC(500));
+        LOG_WRN("Rebooting...");
+        sys_reboot(SYS_REBOOT_COLD);
+    } else {
+        LOG_INF("Reed switch released before 1 second - action cancelled");
+    }
+}
+
+
+/**
+ * GPIO interrupt handler - Chỉ bắt đầu debounce
+ */
 static void reed_switch_handler(const struct device *dev, 
                                 struct gpio_callback *cb,
                                 uint32_t pins) {
-    // Read current pin state immediately
+    if (reed_debouncing) {
+        LOG_DBG("Already debouncing - ignoring interrupt");
+        return;
+    }
+    
     int pin_state = gpio_pin_get(gpio_dev, REED_PIN);
     
-    if (pin_state == 0) {
-        // FALLING edge - pin went LOW (GND connected)
-        
-        LOG_DBG("Reed switch trigger  (pin LOW detected)");
-        
-
-        // k_sleep(K_MSEC(500));
-        // sys_reboot(SYS_REBOOT_COLD);  // BẮT BUỘC PHẢI REBOOT
-
-
-    } else {
-        
-        LOG_WRN("Clearing bond clear - reed switch pin HIGH detected");
-
-        LOG_WRN("Scheduling reed work with %dms debounce", REED_DEBOUNCE_MS);
-        k_work_schedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
-
-        // k_sleep(K_MSEC(200));
-        // //zmk_ble_clear_bonds();
-
-        // zmk_ble_unpair_current_profile();
-
-        // k_sleep(K_MSEC(500));
-        // sys_reboot(SYS_REBOOT_COLD);  // BẮT BUỘC PHẢI REBOOT
-    }
+    LOG_DBG("Reed interrupt - state: %s, starting debounce...", 
+            pin_state ? "HIGH" : "LOW");
+    
+    reed_stable_state = pin_state;
+    reed_debouncing = true;
+    
+    // Schedule debounce check
+    k_work_schedule(&reed_debounce_work, K_MSEC(REED_DEBOUNCE_MS));
 }
 
 static int init_reed_switch(void) {
@@ -594,6 +608,9 @@ static int init_reed_switch(void) {
         return ret;
     }
     
+
+    
+    // Register callback
     gpio_init_callback(&reed_cb_data, reed_switch_handler, BIT(REED_PIN));
     ret = gpio_add_callback(gpio_dev, &reed_cb_data);
     if (ret < 0) {
@@ -601,7 +618,9 @@ static int init_reed_switch(void) {
         return ret;
     }
     
-    k_work_init_delayable(&reed_work, reed_switch_work_handler);
+    // Initialize work handlers
+    k_work_init_delayable(&reed_debounce_work, reed_debounce_handler);
+    k_work_init_delayable(&reed_hold_work, reed_hold_handler);
     
     LOG_INF("Reed switch initialized successfully");
     LOG_INF("  - Mode: Active LOW (connect P0.17 to GND to trigger)");
