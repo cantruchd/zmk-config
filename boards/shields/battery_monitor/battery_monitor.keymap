@@ -4,8 +4,8 @@
  * 
  * Location: config/boards/shields/battery_monitor/battery_monitor.keymap
  * 
- * Note: This is a minimal keymap since we don't have physical keys.
- * All control is done via C code and optional reed switch.
+ * Single key: Bond clear button on P0.17 (D2)
+ * Press to clear all Bluetooth bonds and reboot
  */
 
 #include <behaviors.dtsi>
@@ -13,74 +13,36 @@
 #include <dt-bindings/zmk/bt.h>
 
 / {
-    /*
-     * Define a single dummy key
-     * ZMK requires at least one key in the keymap
-     */
     keymap {
         compatible = "zmk,keymap";
-        
-        /*
-         * Default layer (only layer)
-         * Contains no actual keys since this is a monitoring device
-         */
+
         default_layer {
+            /*
+             * Single key layout:
+             * .-----------.
+             * | BT_CLR_ALL|  <- Press to clear all bonds + reboot
+             * '-----------'
+             */
             bindings = <
-                &none
+                &bt BT_CLR_ALL
             >;
-        };
-    };
-
-    /*
-     * If you want to add manual control via the reed switch,
-     * you can define behaviors here.
-     * 
-     * Example: Toggle fan on reed switch activation
-     */
-    
-    behaviors {
-        /*
-         * Custom behavior for fan toggle
-         * This would need corresponding C code to work
-         */
-        fan_toggle: fan_toggle {
-            compatible = "zmk,behavior-tap-dance";
-            label = "FAN_TOGGLE";
-            #binding-cells = <0>;
-            tapping-term-ms = <200>;
-            bindings = <&none>, <&none>;
-        };
-    };
-
-    /*
-     * Combos (if needed in future)
-     * For example, clear all Bluetooth bonds
-     */
-    combos {
-        compatible = "zmk,combos";
-        
-        /*
-         * Example: Hold reed switch for 5 seconds to clear bonds
-         * (Would need additional implementation)
-         */
-        combo_clear_bonds {
-            timeout-ms = <5000>;
-            key-positions = <0>;
-            bindings = <&bt BT_CLR_ALL>;
         };
     };
 };
 
 /*
- * Usage Notes:
+ * Usage:
+ * - Press the button connected to P0.17 (D2 pin)
+ * - All Bluetooth bonds will be cleared
+ * - Device will automatically reboot and start fresh advertising
  * 
- * This keymap is intentionally minimal because:
- * 1. No physical keys on the device
- * 2. All logic is handled in battery_monitor.c
- * 3. Reed switch (if used) triggers hardware GPIO, not ZMK key events
+ * Hardware:
+ * - Connect momentary push button between P0.17 and GND
+ * - Internal pull-up resistor is enabled
+ * - Button press = LOW signal (active low)
  * 
- * To add functionality:
- * 1. Define custom behaviors in the behaviors section
- * 2. Implement the behavior logic in C code
- * 3. Connect GPIO events to behaviors in the overlay file
+ * Alternative: Reed Switch
+ * - Replace button with reed switch
+ * - Wave magnet near switch to trigger bond clear
+ * - Same pin (P0.17) and behavior
  */

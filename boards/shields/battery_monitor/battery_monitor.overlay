@@ -17,22 +17,23 @@
     };
 
     /*
-     * Dummy kscan (required by ZMK even with no physical keys)
+     * Physical key for bond clearing
+     * P0.17 (D2) = Bond clear button (active low with pull-up)
      */
     kscan0: kscan {
         compatible = "zmk,kscan-gpio-direct";
         label = "KSCAN";
-        input-gpios = <&gpio0 2 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+        input-gpios = <&gpio0 17 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
     };
 
     /*
-     * Dummy matrix transform (required by ZMK)
+     * Matrix transform (1 key = bond clear button)
      */
     default_transform: keymap_transform_0 {
         compatible = "zmk,matrix-transform";
         columns = <1>;
         rows = <1>;
-        map = <0>;
+        map = <RC(0,0)>;
     };
 
     /*
@@ -53,19 +54,6 @@
         mosfet_ctrl: mosfet_control {
             gpios = <&gpio0 24 GPIO_ACTIVE_HIGH>;
             label = "Battery MOSFET Control";
-        };
-    };
-
-    /*
-     * Reed switch for manual bond clearing (optional)
-     * Wave magnet near sensor to clear Bluetooth bonds
-     * P0.17 = D2 pin on nice!nano, with internal pull-down
-     */
-    keys {
-        compatible = "gpio-keys";
-        reed_switch: reed_switch {
-            gpios = <&gpio0 17 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
-            label = "Reed Switch";
         };
     };
 };
@@ -96,12 +84,12 @@
  * 
  * BAT+  - Battery positive (Cell 1+ or Cell 2+ depending on board)
  * GND   - Battery negative (Cell 1- for board #1, Cell 1+ for board #2)
- * P0.15 - MOSFET gate control (output, with external 10kΩ pull-down)
- * P0.17 - Reed switch input (optional, input with pull-down)
+ * P0.24 - MOSFET gate control (D5, output, with external 10kΩ pull-down)
+ * P0.17 - Bond clear button (D2, input with pull-up, active low)
  * P0.31 - Battery sense power control (built-in, managed by ZMK)
  * 
  * Notes:
- * - Only nice!nano #1 needs MOSFET connected to P0.15
+ * - Only nice!nano #1 needs MOSFET connected to P0.24
  * - Both boards report battery independently via Bluetooth
- * - Reed switch is optional, can be omitted
+ * - P0.17 bond clear button: Press to clear bonds (handled via ZMK keymap)
  */
