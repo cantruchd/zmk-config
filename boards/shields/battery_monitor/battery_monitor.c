@@ -527,25 +527,22 @@ static volatile int reed_stable_state = 1;
  * Work handler - Kiểm tra lại sau debounce time
  */
 static void reed_debounce_handler(struct k_work *work) {
+    reed_debouncing = false;
+
     int current_state = gpio_pin_get(gpio_dev, REED_PIN);
     
     if (current_state == reed_stable_state) {
         // Trạng thái ổn định, xử lý sự kiện
-        if (current_state == 1) {
-            // LOW - Reed switch activated (magnet gần)
-            LOG_INF("Reed switch ACTIVATED (debounced) - starting hold timer");
-            k_work_schedule(&reed_hold_work, K_MSEC(REED_HOLD_TIME_MS));
-        } else {
-            // HIGH - Reed switch deactivated
-            LOG_INF("Reed switch DEACTIVATED (debounced) - canceling hold timer");
-            k_work_cancel_delayable(&reed_hold_work);
-        }
+       
+        // LOW - Reed switch activated (magnet gần)
+        LOG_INF("Reed switch ACTIVATED (debounced) - starting hold timer");
+        k_work_schedule(&reed_hold_work, K_MSEC(REED_HOLD_TIME_MS));
+    
     } else {
         LOG_DBG("Reed state changed during debounce - noise rejected");
         k_work_cancel_delayable(&reed_hold_work);
-    }
+    }   
     
-    reed_debouncing = false;
 }
 
 /**
@@ -560,7 +557,7 @@ static void reed_hold_handler(struct k_work *work) {
         LOG_WRN("Reed switch HELD for 1 second - CLEARING BONDS!");
         LOG_WRN("========================================");
         
-        zmk_ble_clear_bonds();
+        //zmk_ble_clear_bonds();
         
     
     } else {
