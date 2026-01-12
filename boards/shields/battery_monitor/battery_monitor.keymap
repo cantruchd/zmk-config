@@ -16,7 +16,6 @@
     behaviors {
         bond_clear_hold: bond_clear_hold {
             compatible = "zmk,behavior-hold-tap";
-            label = "BOND_CLEAR_HOLD";
             #binding-cells = <2>;
             flavor = "hold-preferred";
             tapping-term-ms = <2000>;
@@ -28,7 +27,9 @@
         compatible = "zmk,keymap";
 
         default_layer {
-            bindings = <&bond_clear_hold BT_CLR 0>;
+            bindings = 
+                <&bond_clear_hold BT_CLR 0>
+            ;
         };
     };
 };
