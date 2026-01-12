@@ -565,7 +565,7 @@ static void reed_switch_handler(const struct device *dev,
         LOG_DBG("Clearing bond clear - reed switch pin HIGH detected");
 
         LOG_DBG("Scheduling reed work with %dms debounce", REED_DEBOUNCE_MS);
-        k_work_schedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
+        //k_work_schedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
 
         // k_sleep(K_MSEC(200));
         // //zmk_ble_clear_bonds();
