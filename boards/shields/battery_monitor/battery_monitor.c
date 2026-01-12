@@ -837,8 +837,8 @@ static void reed_debounce_handler(struct k_work *work) {
 static void reed_hold_handler(struct k_work *work) {
     int current_state = gpio_pin_get(gpio_dev, REED_PIN);
     
-    if (current_state == 0) {
-        // Vẫn LOW sau 1 giây - XÁC NHẬN xóa bond
+    if (current_state == 1) {
+        // Vẫn high sau 1 giây - XÁC NHẬN xóa bond
         LOG_WRN("========================================");
         LOG_WRN("Reed switch HELD for 1 second - CLEARING BONDS!");
         LOG_WRN("========================================");
