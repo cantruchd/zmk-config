@@ -519,7 +519,7 @@ static volatile bool reed_active = false;
 static struct k_work_delayable reed_debounce_work;
 static struct k_work_delayable reed_hold_work;
 static volatile bool reed_debouncing = false;
-static volatile int reed_stable_state = -1;
+static volatile int reed_stable_state = 1;
 
 /**
  * Work handler - Kiểm tra lại sau debounce time
