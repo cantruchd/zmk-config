@@ -17,7 +17,7 @@
         default_layer {
             bindings = <
                 // BT_CLR_ALL sẽ xóa toàn bộ profile lưu trong chip
-                &bond_clear_hold BT_CLR_ALL 0
+                &bond_clear_hold BT_CLR
             >;
         };
     };
