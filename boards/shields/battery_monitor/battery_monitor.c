@@ -531,7 +531,7 @@ static void reed_debounce_handler(struct k_work *work) {
     
     if (current_state == reed_stable_state) {
         // Trạng thái ổn định, xử lý sự kiện
-        if (current_state == 0) {
+        if (current_state == 1) {
             // LOW - Reed switch activated (magnet gần)
             LOG_INF("Reed switch ACTIVATED (debounced) - starting hold timer");
             k_work_schedule(&reed_hold_work, K_MSEC(REED_HOLD_TIME_MS));
@@ -553,7 +553,7 @@ static void reed_debounce_handler(struct k_work *work) {
 static void reed_hold_handler(struct k_work *work) {
     int current_state = gpio_pin_get(gpio_dev, REED_PIN);
     
-    if (current_state == 0) {
+    if (current_state == 1) {
         // Vẫn LOW sau 1 giây - XÁC NHẬN xóa bond
         LOG_WRN("========================================");
         LOG_WRN("Reed switch HELD for 1 second - CLEARING BONDS!");
@@ -561,9 +561,7 @@ static void reed_hold_handler(struct k_work *work) {
         
         zmk_ble_clear_bonds();
         
-        k_sleep(K_MSEC(500));
-        LOG_WRN("Rebooting...");
-        sys_reboot(SYS_REBOOT_COLD);
+    
     } else {
         LOG_INF("Reed switch released before 1 second - action cancelled");
     }
