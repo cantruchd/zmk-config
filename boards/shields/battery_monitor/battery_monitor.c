@@ -527,13 +527,11 @@ static void reed_switch_work_handler(struct k_work *work) {
         LOG_WRN("========================================");
         
         // Clear all bonds
-        int ret = zmk_ble_clear_bonds();
-        if (ret != 0) {
-            LOG_ERR("Clear bonds failed: %d", ret);
-        }
+        zmk_ble_clear_bonds();
+    
         
         LOG_WRN("Bonds cleared, waiting before reboot...");
-        k_sleep(K_MSEC(500));
+        //k_sleep(K_MSEC(500));
         
         // LOG_WRN("Rebooting device...");
         // LOG_WRN("========================================");
