@@ -515,9 +515,7 @@ static struct gpio_callback reed_cb_data;
 static struct k_work_delayable reed_work;
 static volatile uint32_t reed_trigger_count = 0;
 
-**
- * Work handler - chỉ chạy nếu reed switch vẫn được giữ sau 1 giây
- */
+static volatile bool reed_active = false;
 static void reed_switch_work_handler(struct k_work *work) {
     // Kiểm tra lại trạng thái pin - PHẢI vẫn LOW (được giữ)
     int pin_state = gpio_pin_get(gpio_dev, REED_PIN);
