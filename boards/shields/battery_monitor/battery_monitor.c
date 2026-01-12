@@ -520,8 +520,8 @@ static void reed_switch_work_handler(struct k_work *work) {
     // Kiểm tra lại trạng thái pin - PHẢI vẫn LOW (được giữ)
     int pin_state = gpio_pin_get(gpio_dev, REED_PIN);
     
-    if (pin_state == 0) {
-        // Pin vẫn LOW sau 1 giây - xác nhận muốn clear bonds
+    if (pin_state != 0) {
+        // Pin vẫn high sau 1 giây - xác nhận muốn clear bonds
         LOG_WRN("========================================");
         LOG_WRN("Reed switch held for 1 second - clearing bonds!");
         LOG_WRN("========================================");
@@ -555,10 +555,7 @@ static void reed_switch_handler(const struct device *dev,
         
         LOG_WRN("Reed switch trigger  (pin LOW detected)");
         
-        LOG_DBG("Clearing bond clear - reed switch pin LOW detected");
-        LOG_DBG("Scheduling reed work with %dms debounce", REED_DEBOUNCE_MS);
-        k_work_schedule(&reed_work, K_MSEC(REED_DEBOUNCE_MS));
-        
+
         // k_sleep(K_MSEC(500));
         // sys_reboot(SYS_REBOOT_COLD);  // BẮT BUỘC PHẢI REBOOT
 
