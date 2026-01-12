@@ -218,15 +218,6 @@
             #binding-cells = <0>;
             bindings = <&mt LA(TAB) TAB>, <&mt LS(LA(TAB)) LS(TAB)>;
         };
-
-        new_behavior: new_behavior {
-            compatible = "zmk,behavior-hold-tap";
-            label = "NEW_BEHAVIOR";
-            bindings = <&bt>, <&none>;
-
-            #binding-cells = <2>;
-            tapping-term-ms = <2000>;
-        };
     };
 
     keymap {
@@ -303,11 +294,11 @@
 
         taipo {
             bindings = <
-&trans                      &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans
-&trans                      &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans
-&trans                      &kp R   &kp S   &kp N   &kp I   &trans                    &trans  &kp I   &kp N   &kp S   &kp R   &trans
-&new_behavior BT_CLR_ALL 0  &kp A   &kp O   &kp T   &kp E   &trans  &trans    &trans  &trans  &kp E   &kp T   &kp O   &kp A   &trans
-                                            &trans  &trans  &trans  &trans    &trans  &mo 5   &trans  &trans
+&trans  &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans
+&trans  &trans  &trans  &trans  &trans  &trans                    &trans  &trans  &trans  &trans  &trans  &trans
+&trans  &kp R   &kp S   &kp N   &kp I   &trans                    &trans  &kp I   &kp N   &kp S   &kp R   &trans
+&trans  &kp A   &kp O   &kp T   &kp E   &trans  &trans    &trans  &trans  &kp E   &kp T   &kp O   &kp A   &trans
+                        &trans  &trans  &trans  &trans    &trans  &mo 5   &trans  &trans
             >;
 
             label = "taipo";
