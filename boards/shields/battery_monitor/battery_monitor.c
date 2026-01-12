@@ -515,21 +515,37 @@ static struct gpio_callback reed_cb_data;
 static struct k_work_delayable reed_work;
 static volatile uint32_t reed_trigger_count = 0;
 
+**
+ * Work handler - chỉ chạy nếu reed switch vẫn được giữ sau 1 giây
+ */
 static void reed_switch_work_handler(struct k_work *work) {
-    LOG_INF("Reed work handler - executing bond clear");
+    // Kiểm tra lại trạng thái pin - PHẢI vẫn LOW (được giữ)
+    int pin_state = gpio_pin_get(gpio_dev, REED_PIN);
     
-    LOG_WRN("========================================");
-    LOG_WRN("Clearing all Bluetooth bonds!");
-    LOG_WRN("========================================");
+    if (pin_state == 0) {
+        // Pin vẫn LOW sau 1 giây - xác nhận muốn clear bonds
+        LOG_WRN("========================================");
+        LOG_WRN("Reed switch held for 1 second - clearing bonds!");
+        LOG_WRN("========================================");
+        
+        // Clear all bonds
+        int ret = zmk_ble_clear_bonds();
+        if (ret != 0) {
+            LOG_ERR("Clear bonds failed: %d", ret);
+        }
+        
+        LOG_WRN("Bonds cleared, waiting before reboot...");
+        k_sleep(K_MSEC(500));
+        
+        // LOG_WRN("Rebooting device...");
+        // LOG_WRN("========================================");
+        // sys_reboot(SYS_REBOOT_COLD);
+    } else {
+        // Pin đã HIGH - đã thả ra trước 1 giây
+        LOG_INF("Reed switch released before 1 second - cancelled");
+    }
     
-    zmk_ble_clear_all_bonds();
-    
-    LOG_WRN("All Bluetooth bonds cleared successfully");
-    LOG_WRN("Rebooting device to restart advertising...");
-    LOG_WRN("========================================");
-    
-    // k_sleep(K_MSEC(200));
-    // sys_reboot(SYS_REBOOT_COLD);
+    reed_active = false;
 }
 
 static void reed_switch_handler(const struct device *dev, 
