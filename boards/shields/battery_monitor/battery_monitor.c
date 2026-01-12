@@ -50,7 +50,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define AUTO_UPDATE_DURATION_MS 1800000 // 30 minutes (30 * 60 * 1000)
 
 // Reed switch debounce time (milliseconds)
-#define REED_DEBOUNCE_MS    1000   // Increased to 100ms for better stability
+
+#define REED_DEBOUNCE_MS        50   // Debounce nhiễu cơ học (50ms)
+#define REED_HOLD_TIME_MS     1000   // Thời gian giữ để xác nhận (1 giây)
 
 // ============================================================================
 // BLE Service and Characteristic UUIDs
