@@ -597,31 +597,7 @@ static int battery_level_listener(const zmk_event_t *eh) {
     // Check auto-control rules FIRST (highest priority)
     check_auto_control(battery_percent);
     
-    // Storage mode logic (original behavior)
-    if (battery_percent <= STORAGE_THRESHOLD && power_state) {
-        LOG_WRN("Battery at storage level (%d%%), entering storage mode", 
-                battery_percent);
-        set_power_state(false);
-    }
     
-    // Low battery warning
-    if (battery_percent <= LOW_WARNING && battery_percent > CRITICAL_LOW) {
-        if (last_battery_percent > LOW_WARNING) {
-            LOG_WRN("Battery low: %d%%", battery_percent);
-        }
-    }
-    
-    // Critical battery warning
-    if (battery_percent <= CRITICAL_LOW) {
-        if (last_battery_percent > CRITICAL_LOW) {
-            LOG_ERR("Battery critical: %d%% - Please charge soon!", 
-                    battery_percent);
-        }
-        if (power_state) {
-            LOG_ERR("Forcing power OFF due to critical battery");
-            set_power_state(false);
-        }
-    }
     
     last_battery_percent = battery_percent;
     
@@ -839,7 +815,7 @@ static void reed_debounce_handler(struct k_work *work) {
     
     if (current_state == reed_expected_state) {
         // Trạng thái ổn định sau debounce - xử lý sự kiện
-        if (current_state == 0) {
+        if (current_state == 1) {
             // LOW - Reed switch activated (magnet gần)
             LOG_INF("Reed switch ACTIVATED (debounced) - starting hold timer");
             k_work_schedule(&reed_hold_work, K_MSEC(REED_HOLD_TIME_MS));
