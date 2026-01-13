@@ -11,7 +11,8 @@
  * - Temperature monitoring and BLE reporting
  * - Voltage monitoring and BLE reporting
  * - Smart power saving: Auto-updates 30min after first read, then stops
- * - Bond clearing via ZMK keymap (see battery_monitor.keymap)
+ * - Bootloader control via BLE (enter flash/DFU mode remotely) ⭐ NEW
+ * - Bond clearing via ZMK keymap
  */
 
 #include <zephyr/device.h>
@@ -80,10 +81,21 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define BT_UUID_VOLTAGE \
     BT_UUID_DECLARE_128(BT_UUID_VOLTAGE_VAL)
 
+// ⭐ NEW: Bootloader control characteristic UUID
+#define BT_UUID_BOOTLOADER_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef4)
+
+#define BT_UUID_BOOTLOADER \
+    BT_UUID_DECLARE_128(BT_UUID_BOOTLOADER_VAL)
+
 // Commands for power control
 #define CMD_POWER_OFF    0x00
 #define CMD_POWER_ON     0x01
 #define CMD_POWER_TOGGLE 0x02
+
+// ⭐ NEW: Bootloader commands
+#define CMD_ENTER_BOOTLOADER 0x42  // Magic value: 'B' for Bootloader
+#define CMD_RESET_DEVICE     0x52  // Magic value: 'R' for Reset
 
 // ============================================================================
 // Global Variables
@@ -105,6 +117,9 @@ static struct k_work_delayable update_work;
 // Channel discovery
 static enum sensor_channel discovered_channel = SENSOR_CHAN_PRIV_START;
 
+// ⭐ NEW: Bootloader control work
+static struct k_work_delayable bootloader_work;
+
 // Forward declaration of GATT service
 extern const struct bt_gatt_service_static battery_monitor_svc;
 
@@ -122,6 +137,54 @@ static ssize_t read_temperature(struct bt_conn *conn,
 static ssize_t read_voltage(struct bt_conn *conn,
                              const struct bt_gatt_attr *attr,
                              void *buf, uint16_t len, uint16_t offset);
+static ssize_t write_bootloader(struct bt_conn *conn,
+                                 const struct bt_gatt_attr *attr,
+                                 const void *buf, uint16_t len,
+                                 uint16_t offset, uint8_t flags);
+
+// ============================================================================
+// ⭐ NEW: Bootloader Control Functions
+// ============================================================================
+
+/**
+ * Enter bootloader/DFU mode
+ * This allows firmware flashing via USB without physical reset button
+ */
+static void enter_bootloader_mode(void) {
+    LOG_WRN("========================================");
+    LOG_WRN("ENTERING BOOTLOADER MODE");
+    LOG_WRN("Device will reboot to bootloader");
+    LOG_WRN("Ready for firmware flashing");
+    LOG_WRN("========================================");
+    
+    // Give time for log to flush
+    k_sleep(K_MSEC(100));
+    
+    // Reboot to bootloader
+    // SYS_REBOOT_WARM enters bootloader on nRF52840
+    sys_reboot(SYS_REBOOT_WARM);
+}
+
+/**
+ * Reset device (normal reboot, not bootloader)
+ */
+static void reset_device(void) {
+    LOG_WRN("========================================");
+    LOG_WRN("RESETTING DEVICE");
+    LOG_WRN("Normal reboot in 1 second...");
+    LOG_WRN("========================================");
+    
+    k_sleep(K_MSEC(100));
+    sys_reboot(SYS_REBOOT_COLD);
+}
+
+/**
+ * Delayed bootloader entry (with countdown)
+ * This gives BLE time to send response before reboot
+ */
+static void bootloader_work_handler(struct k_work *work) {
+    enter_bootloader_mode();
+}
 
 // ============================================================================
 // Auto-Update Management
@@ -478,7 +541,49 @@ static ssize_t read_voltage(struct bt_conn *conn,
 }
 
 /**
- * GATT Service Definition
+ * ⭐ NEW: Bootloader control write handler
+ */
+static ssize_t write_bootloader(struct bt_conn *conn,
+                                 const struct bt_gatt_attr *attr,
+                                 const void *buf, uint16_t len,
+                                 uint16_t offset, uint8_t flags) {
+    if (offset + len > sizeof(uint8_t)) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+
+    uint8_t command = *((uint8_t *)buf);
+    
+    LOG_WRN("Received bootloader command: 0x%02X", command);
+    
+    switch (command) {
+        case CMD_ENTER_BOOTLOADER:
+            LOG_WRN("⚠️  BOOTLOADER MODE REQUESTED");
+            LOG_WRN("Device will reboot to bootloader in 2 seconds...");
+            
+            // Schedule delayed bootloader entry
+            // This gives BLE stack time to send response
+            k_work_reschedule(&bootloader_work, K_MSEC(2000));
+            break;
+            
+        case CMD_RESET_DEVICE:
+            LOG_WRN("⚠️  DEVICE RESET REQUESTED");
+            LOG_WRN("Device will reboot in 2 seconds...");
+            
+            // Delay to allow BLE response
+            k_sleep(K_MSEC(2000));
+            reset_device();
+            break;
+            
+        default:
+            LOG_WRN("Unknown bootloader command: 0x%02X", command);
+            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    return len;
+}
+
+/**
+ * GATT Service Definition (with bootloader control added)
  */
 BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
     BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
@@ -503,6 +608,12 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
                           BT_GATT_PERM_READ,
                           read_voltage, NULL, NULL),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    
+    // ⭐ NEW: Bootloader control characteristic (write only)
+    BT_GATT_CHARACTERISTIC(BT_UUID_BOOTLOADER,
+                          BT_GATT_CHRC_WRITE,
+                          BT_GATT_PERM_WRITE,
+                          NULL, write_bootloader, NULL),
 );
 
 // ============================================================================
@@ -550,6 +661,9 @@ static int battery_monitor_init(const struct device *dev) {
     // Initialize update work (starts inactive)
     k_work_init_delayable(&update_work, update_work_handler);
     
+    // ⭐ NEW: Initialize bootloader work
+    k_work_init_delayable(&bootloader_work, bootloader_work_handler);
+    
     LOG_INF("Battery Monitor initialized successfully");
     LOG_INF("  - MOSFET control: P0.%d", MOSFET_PIN);
     LOG_INF("  - Storage threshold: %d%%", STORAGE_THRESHOLD);
@@ -560,9 +674,75 @@ static int battery_monitor_init(const struct device *dev) {
     LOG_INF("  - Power saving: Auto-updates disabled (activate by reading)");
     LOG_INF("  - Update interval: %d seconds", UPDATE_INTERVAL_MS / 1000);
     LOG_INF("  - Auto-update duration: 30 minutes");
+    LOG_INF("  - Bootloader control: enabled via BLE ⭐");
     LOG_INF("  - Bond clear: via keymap (P0.17/D2 button)");
     
     return 0;
 }
 
 SYS_INIT(battery_monitor_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
+
+/*
+ * ============================================================================
+ * BLE Service Summary
+ * ============================================================================
+ * 
+ * Service UUID: 12345678-1234-5678-1234-56789abcdef0
+ * 
+ * Characteristics:
+ * 1. Power Control (12345678-1234-5678-1234-56789abcdef1)
+ *    - Read: Get current power state (0x00=OFF, 0x01=ON)
+ *    - Write: Control power (0x00=OFF, 0x01=ON, 0x02=TOGGLE)
+ *    - Notify: Notifies when power state changes
+ * 
+ * 2. Temperature (12345678-1234-5678-1234-56789abcdef2)
+ *    - Read: Get current temperature (int16_t in 0.01°C)
+ *    - Notify: Updates every 10 seconds (when auto-update active)
+ * 
+ * 3. Voltage (12345678-1234-5678-1234-56789abcdef3)
+ *    - Read: Get current voltage (uint16_t in millivolts)
+ *    - Notify: Updates every 10 seconds (when auto-update active)
+ * 
+ * 4. Bootloader Control (12345678-1234-5678-1234-56789abcdef4) ⭐ NEW
+ *    - Write: Control bootloader/reset
+ *      * 0x42 = Enter bootloader mode (for firmware flashing)
+ *      * 0x52 = Reset device (normal reboot)
+ * 
+ * Temperature Format:
+ * - Value: int16_t (2 bytes, little-endian)
+ * - Unit: 0.01°C
+ * - Example: 2550 = 25.50°C
+ * 
+ * Voltage Format:
+ * - Value: uint16_t (2 bytes, little-endian)
+ * - Unit: millivolts (mV)
+ * - Example: 3700 = 3.7V
+ * - Range: 3000-4200 mV (typical LiPo)
+ * 
+ * ============================================================================
+ * Bootloader Control Usage
+ * ============================================================================
+ * 
+ * To enter bootloader mode via BLE:
+ * 1. Connect to device via Bluetooth
+ * 2. Find characteristic: 12345678-1234-5678-1234-56789abcdef4
+ * 3. Write value: 0x42 (decimal 66)
+ * 4. Device will reboot to bootloader after 2 seconds
+ * 5. Ready for firmware flashing via USB
+ * 
+ * To reset device:
+ * 1. Write value: 0x52 (decimal 82)
+ * 2. Device will reboot normally after 2 seconds
+ * 
+ * Example (Python with bleak):
+ * ```python
+ * import asyncio
+ * from bleak import BleakClient
+ * 
+ * UUID = "12345678-1234-5678-1234-56789abcdef4"
+ * 
+ * async def enter_bootloader(address):
+ *     async with BleakClient(address) as client:
+ */
+
+ 
