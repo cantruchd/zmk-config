@@ -160,15 +160,11 @@ static void enter_bootloader_mode(void) {
     // Give time for log to flush
     k_sleep(K_MSEC(100));
     
-    // Sử dụng ZMK bootloader behavior
-    const struct device *dev = device_get_binding("BOOTLOADER");
-    if (dev) {
-        // Trigger bootloader behavior
-        zmk_behavior_invoke_binding(&zmk_behavior_bootloader_config.behavior, 0, true);
-    } else {
-        // Fallback: sử dụng magic number để vào bootloader
-        NRF_POWER->GPREGRET = 0xB1;  // Magic number cho nRF52840
-        NVIC_SystemReset();
+        // Set magic number for nRF52840 bootloader
+    NRF_POWER->GPREGRET = 0xB1;
+    
+    // Perform system reset
+    NVIC_SystemReset();
     }
 }
 
