@@ -160,14 +160,10 @@ static void enter_bootloader_mode(void) {
     LOG_WRN("Ready for firmware flashing");
     LOG_WRN("========================================");
     
-    // Give time for log to flush
-    k_sleep(K_MSEC(100));
-    
-    // Set GPREGRET register for bootloader entry
-    nrf_power_gpregret_set(NRF_POWER, 0, 0xB1);  // ⭐ 3 parameters
-    
-    // Cold reboot
-    sys_reboot(SYS_REBOOT_COLD);
+    volatile uint32_t *dfu = (uint32_t *)0x20007F7C;
+    *dfu = 0x4e524653;
+    NRF_POWER->GPREGRET = 0xB1;
+    NVIC_SystemReset();
     
 }
 
