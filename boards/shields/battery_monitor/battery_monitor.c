@@ -31,6 +31,9 @@
 #include <zmk/ble.h>
 #include <zmk/events/battery_state_changed.h>
 
+// ⭐ ADD THIS LINE
+#include <hal/nrf_power.h>
+
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // ============================================================================
