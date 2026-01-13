@@ -164,7 +164,7 @@ static void enter_bootloader_mode(void) {
     k_sleep(K_MSEC(100));
     
     // Set GPREGRET register for bootloader entry
-    nrf_power_gpregret_set(NRF_POWER, 0xB1);
+    nrf_power_gpregret_set(NRF_POWER, 0, 0xB1);  // ⭐ 3 parameters
     
     // Cold reboot
     sys_reboot(SYS_REBOOT_COLD);
