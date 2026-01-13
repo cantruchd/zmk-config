@@ -160,11 +160,11 @@ static void enter_bootloader_mode(void) {
     // Give time for log to flush
     k_sleep(K_MSEC(100));
     
-        // Set magic number for nRF52840 bootloader
-    NRF_POWER->GPREGRET = 0xB1;
+    // Set GPREGRET register for bootloader entry
+    nrf_power_gpregret_set(NRF_POWER, 0xB1);
     
-    // Perform system reset
-    NVIC_SystemReset();
+    // Cold reboot
+    sys_reboot(SYS_REBOOT_COLD);
     
 }
 
