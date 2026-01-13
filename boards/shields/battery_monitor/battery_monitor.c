@@ -165,7 +165,7 @@ static void enter_bootloader_mode(void) {
     
     // Perform system reset
     NVIC_SystemReset();
-    }
+    
 }
 
 /**
