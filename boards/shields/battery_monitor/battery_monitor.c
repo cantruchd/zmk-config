@@ -7,13 +7,11 @@
  * Features:
  * - MOSFET control for battery power (on/off/toggle)
  * - Automatic storage mode at 40%
- * - Auto ON/OFF based on configurable battery levels (BLE configurable)
  * - Low battery warnings
  * - Temperature monitoring and BLE reporting
  * - Voltage monitoring and BLE reporting
- * - Reed switch support for bond clearing
  * - Smart power saving: Auto-updates 30min after first read, then stops
- * - NVS storage for persistent settings (survives power loss)
+ * - Bond clearing via ZMK keymap (see battery_monitor.keymap)
  */
 
 #include <zephyr/device.h>
@@ -26,7 +24,6 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/reboot.h>
-#include <zephyr/settings/settings.h>
 #include <stdlib.h>
 
 #include <zmk/battery.h>
@@ -41,31 +38,15 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // GPIO pins
 #define MOSFET_PIN  24  // P0.24 = D5 on nice!nano (right side)
-#define REED_PIN    17  // P0.17 = D2 on nice!nano (left side)
 
 // Battery thresholds (percentage)
 #define STORAGE_THRESHOLD   40  // Auto-off at 40%
 #define LOW_WARNING         35  // Warning at 35%
 #define CRITICAL_LOW        20  // Critical at 20%
 
-// Default auto-control thresholds
-#define DEFAULT_AUTO_ON_THRESHOLD   25  // Auto ON at 25%
-#define DEFAULT_AUTO_OFF_THRESHOLD  80  // Auto OFF at 80%
-
 // Update intervals
 #define UPDATE_INTERVAL_MS      10000   // 10 seconds between updates
 #define AUTO_UPDATE_DURATION_MS 1800000 // 30 minutes (30 * 60 * 1000)
-
-// Reed switch debounce time (milliseconds)
-#define REED_DEBOUNCE_MS        50   // Debounce nhiễu cơ học (50ms)
-#define REED_HOLD_TIME_MS     1000   // Thời gian giữ để xác nhận (1 giây)
-
-// NVS Settings keys
-#define SETTINGS_NAME "battery_monitor"
-#define SETTINGS_KEY_AUTO_ON_ENABLE "auto_on_en"
-#define SETTINGS_KEY_AUTO_OFF_ENABLE "auto_off_en"
-#define SETTINGS_KEY_AUTO_ON_THRESHOLD "auto_on_th"
-#define SETTINGS_KEY_AUTO_OFF_THRESHOLD "auto_off_th"
 
 // ============================================================================
 // BLE Service and Characteristic UUIDs
@@ -99,45 +80,10 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define BT_UUID_VOLTAGE \
     BT_UUID_DECLARE_128(BT_UUID_VOLTAGE_VAL)
 
-// Auto-control configuration characteristic UUID
-#define BT_UUID_AUTO_CONTROL_VAL \
-    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef4)
-
-#define BT_UUID_AUTO_CONTROL \
-    BT_UUID_DECLARE_128(BT_UUID_AUTO_CONTROL_VAL)
-
 // Commands for power control
 #define CMD_POWER_OFF    0x00
 #define CMD_POWER_ON     0x01
 #define CMD_POWER_TOGGLE 0x02
-
-// ============================================================================
-// Auto-Control Configuration Structure
-// ============================================================================
-
-/**
- * Auto-control configuration (6 bytes total)
- * Byte 0: auto_on_enable (0=disabled, 1=enabled)
- * Byte 1: auto_off_enable (0=disabled, 1=enabled)
- * Byte 2: auto_on_threshold (percentage 0-100)
- * Byte 3: auto_off_threshold (percentage 0-100)
- * Byte 4-5: Reserved for future use
- */
-struct auto_control_config {
-    uint8_t auto_on_enable;       // Enable auto-ON when battery drops below threshold
-    uint8_t auto_off_enable;      // Enable auto-OFF when battery rises above threshold
-    uint8_t auto_on_threshold;    // Battery % to auto-ON (e.g., 25%)
-    uint8_t auto_off_threshold;   // Battery % to auto-OFF (e.g., 80%)
-    uint8_t reserved[2];          // Reserved for future features
-} __packed;
-
-static struct auto_control_config auto_config = {
-    .auto_on_enable = 0,
-    .auto_off_enable = 0,
-    .auto_on_threshold = DEFAULT_AUTO_ON_THRESHOLD,
-    .auto_off_threshold = DEFAULT_AUTO_OFF_THRESHOLD,
-    .reserved = {0, 0}
-};
 
 // ============================================================================
 // Global Variables
@@ -159,9 +105,6 @@ static struct k_work_delayable update_work;
 // Channel discovery
 static enum sensor_channel discovered_channel = SENSOR_CHAN_PRIV_START;
 
-// Settings loaded flag
-static bool settings_loaded = false;
-
 // Forward declaration of GATT service
 extern const struct bt_gatt_service_static battery_monitor_svc;
 
@@ -179,162 +122,6 @@ static ssize_t read_temperature(struct bt_conn *conn,
 static ssize_t read_voltage(struct bt_conn *conn,
                              const struct bt_gatt_attr *attr,
                              void *buf, uint16_t len, uint16_t offset);
-static ssize_t read_auto_control(struct bt_conn *conn,
-                                  const struct bt_gatt_attr *attr,
-                                  void *buf, uint16_t len, uint16_t offset);
-static ssize_t write_auto_control(struct bt_conn *conn,
-                                   const struct bt_gatt_attr *attr,
-                                   const void *buf, uint16_t len,
-                                   uint16_t offset, uint8_t flags);
-
-// ============================================================================
-// NVS Settings Management
-// ============================================================================
-
-/**
- * Save auto-control configuration to NVS
- */
-static int save_auto_config(void) {
-    int rc;
-    
-    rc = settings_save_one(SETTINGS_NAME "/" SETTINGS_KEY_AUTO_ON_ENABLE,
-                          &auto_config.auto_on_enable,
-                          sizeof(auto_config.auto_on_enable));
-    if (rc != 0) {
-        LOG_ERR("Failed to save auto_on_enable: %d", rc);
-        return rc;
-    }
-    
-    rc = settings_save_one(SETTINGS_NAME "/" SETTINGS_KEY_AUTO_OFF_ENABLE,
-                          &auto_config.auto_off_enable,
-                          sizeof(auto_config.auto_off_enable));
-    if (rc != 0) {
-        LOG_ERR("Failed to save auto_off_enable: %d", rc);
-        return rc;
-    }
-    
-    rc = settings_save_one(SETTINGS_NAME "/" SETTINGS_KEY_AUTO_ON_THRESHOLD,
-                          &auto_config.auto_on_threshold,
-                          sizeof(auto_config.auto_on_threshold));
-    if (rc != 0) {
-        LOG_ERR("Failed to save auto_on_threshold: %d", rc);
-        return rc;
-    }
-    
-    rc = settings_save_one(SETTINGS_NAME "/" SETTINGS_KEY_AUTO_OFF_THRESHOLD,
-                          &auto_config.auto_off_threshold,
-                          sizeof(auto_config.auto_off_threshold));
-    if (rc != 0) {
-        LOG_ERR("Failed to save auto_off_threshold: %d", rc);
-        return rc;
-    }
-    
-    LOG_INF("Auto-control config saved to NVS");
-    return 0;
-}
-
-/**
- * Settings load callback
- */
-static int settings_set_callback(const char *name, size_t len,
-                                 settings_read_cb read_cb, void *cb_arg) {
-    const char *next;
-    int rc;
-    
-    if (settings_name_steq(name, SETTINGS_KEY_AUTO_ON_ENABLE, &next) && !next) {
-        if (len != sizeof(auto_config.auto_on_enable)) {
-            return -EINVAL;
-        }
-        rc = read_cb(cb_arg, &auto_config.auto_on_enable, len);
-        if (rc >= 0) {
-            LOG_INF("Loaded auto_on_enable: %d", auto_config.auto_on_enable);
-            return 0;
-        }
-        return rc;
-    }
-    
-    if (settings_name_steq(name, SETTINGS_KEY_AUTO_OFF_ENABLE, &next) && !next) {
-        if (len != sizeof(auto_config.auto_off_enable)) {
-            return -EINVAL;
-        }
-        rc = read_cb(cb_arg, &auto_config.auto_off_enable, len);
-        if (rc >= 0) {
-            LOG_INF("Loaded auto_off_enable: %d", auto_config.auto_off_enable);
-            return 0;
-        }
-        return rc;
-    }
-    
-    if (settings_name_steq(name, SETTINGS_KEY_AUTO_ON_THRESHOLD, &next) && !next) {
-        if (len != sizeof(auto_config.auto_on_threshold)) {
-            return -EINVAL;
-        }
-        rc = read_cb(cb_arg, &auto_config.auto_on_threshold, len);
-        if (rc >= 0) {
-            LOG_INF("Loaded auto_on_threshold: %d%%", auto_config.auto_on_threshold);
-            return 0;
-        }
-        return rc;
-    }
-    
-    if (settings_name_steq(name, SETTINGS_KEY_AUTO_OFF_THRESHOLD, &next) && !next) {
-        if (len != sizeof(auto_config.auto_off_threshold)) {
-            return -EINVAL;
-        }
-        rc = read_cb(cb_arg, &auto_config.auto_off_threshold, len);
-        if (rc >= 0) {
-            LOG_INF("Loaded auto_off_threshold: %d%%", auto_config.auto_off_threshold);
-            return 0;
-        }
-        return rc;
-    }
-    
-    return -ENOENT;
-}
-
-static struct settings_handler settings_handler = {
-    .name = SETTINGS_NAME,
-    .h_set = settings_set_callback,
-};
-
-/**
- * Initialize settings subsystem
- */
-static int init_settings(void) {
-    int rc;
-    
-    rc = settings_subsys_init();
-    if (rc != 0) {
-        LOG_ERR("Settings subsys init failed: %d", rc);
-        return rc;
-    }
-    
-    rc = settings_register(&settings_handler);
-    if (rc != 0) {
-        LOG_ERR("Settings register failed: %d", rc);
-        return rc;
-    }
-    
-    rc = settings_load();
-    if (rc != 0) {
-        LOG_WRN("Settings load failed: %d (using defaults)", rc);
-    } else {
-        LOG_INF("Settings loaded successfully");
-    }
-    
-    settings_loaded = true;
-    
-    // Log current configuration
-    LOG_INF("Auto-control configuration:");
-    LOG_INF("  Auto-ON:  %s at %d%%",
-            auto_config.auto_on_enable ? "ENABLED" : "DISABLED",
-            auto_config.auto_on_threshold);
-    LOG_INF("  Auto-OFF: %s at %d%%",
-            auto_config.auto_off_enable ? "ENABLED" : "DISABLED",
-            auto_config.auto_off_threshold);
-    
-    return 0;
-}
 
 // ============================================================================
 // Auto-Update Management
@@ -380,6 +167,10 @@ static bool should_auto_update(void) {
 // Battery Voltage Reading
 // ============================================================================
 
+/**
+ * Read battery voltage from ZMK battery sensor
+ * Uses channel discovery
+ */
 static void read_battery_voltage(void) {
     const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
     
@@ -388,7 +179,7 @@ static void read_battery_voltage(void) {
         return;
     }
 
-    // 1. Lấy mẫu dữ liệu từ cảm biến (Fetch)
+    // 1. Fetch sample from sensor
     int rc = sensor_sample_fetch(battery);
     if (rc != 0) {
         LOG_WRN("Failed to fetch battery: %d", rc);
@@ -397,11 +188,11 @@ static void read_battery_voltage(void) {
 
     struct sensor_value voltage;
 
-    // 2. Nếu đã biết channel đúng, lấy trực tiếp luôn
+    // 2. If we already know the correct channel, use it directly
     if (discovered_channel != SENSOR_CHAN_PRIV_START) {
         rc = sensor_channel_get(battery, discovered_channel, &voltage);
     } 
-    // 3. Nếu chưa biết (lần đầu chạy), tiến hành dò tìm
+    // 3. Otherwise, discover the correct channel (first run)
     else {
         static const enum sensor_channel candidates[] = {
             SENSOR_CHAN_VOLTAGE,
@@ -412,17 +203,18 @@ static void read_battery_voltage(void) {
         for (int i = 0; i < ARRAY_SIZE(candidates); i++) {
             rc = sensor_channel_get(battery, candidates[i], &voltage);
             if (rc == 0) {
-                discovered_channel = candidates[i]; // Ghi nhớ channel này
+                discovered_channel = candidates[i];
+                LOG_INF("Voltage channel discovered: index %d", i);
                 break;
             }
         }
     }
 
-    // 4. Xử lý kết quả cuối cùng
+    // 4. Process the result
     if (rc == 0) {
-        // Tính toán mV: val1 (Volts), val2 (Microvolts)
+        // Calculate mV: val1 (Volts), val2 (Microvolts)
         current_voltage_mv = (voltage.val1 * 1000) + (voltage.val2 / 1000);
-        LOG_DBG("Voltage: %d mV", current_voltage_mv);
+        LOG_INF("Voltage: %d mV", current_voltage_mv);
     } else {
         LOG_ERR("No valid voltage channel found");
         current_voltage_mv = 0;
@@ -553,33 +345,6 @@ bool battery_monitor_get_power_state(void) {
 }
 
 // ============================================================================
-// Auto-Control Logic
-// ============================================================================
-
-/**
- * Check and apply auto-control rules based on battery level
- */
-static void check_auto_control(uint8_t battery_percent) {
-    // Auto-ON logic: Turn on MOSFET when battery drops below threshold
-    if (auto_config.auto_on_enable) {
-        if (battery_percent <= auto_config.auto_on_threshold && !power_state) {
-            LOG_WRN("Auto-ON triggered: Battery at %d%% (<= %d%%)",
-                    battery_percent, auto_config.auto_on_threshold);
-            set_power_state(true);
-        }
-    }
-    
-    // Auto-OFF logic: Turn off MOSFET when battery rises above threshold
-    if (auto_config.auto_off_enable) {
-        if (battery_percent >= auto_config.auto_off_threshold && power_state) {
-            LOG_WRN("Auto-OFF triggered: Battery at %d%% (>= %d%%)",
-                    battery_percent, auto_config.auto_off_threshold);
-            set_power_state(false);
-        }
-    }
-}
-
-// ============================================================================
 // Battery Level Monitoring
 // ============================================================================
 
@@ -594,10 +359,7 @@ static int battery_level_listener(const zmk_event_t *eh) {
     
     LOG_INF("Battery: %d%%", battery_percent);
     
-    // Check auto-control rules FIRST (highest priority)
-    check_auto_control(battery_percent);
-    
-    // Storage mode logic (original behavior)
+    // Storage mode logic
     if (battery_percent <= STORAGE_THRESHOLD && power_state) {
         LOG_WRN("Battery at storage level (%d%%), entering storage mode", 
                 battery_percent);
@@ -715,79 +477,8 @@ static ssize_t read_voltage(struct bt_conn *conn,
                             &current_voltage_mv, sizeof(current_voltage_mv));
 }
 
-static ssize_t read_auto_control(struct bt_conn *conn,
-                                  const struct bt_gatt_attr *attr,
-                                  void *buf, uint16_t len, uint16_t offset) {
-    LOG_INF("Auto-control config read by host");
-    
-    return bt_gatt_attr_read(conn, attr, buf, len, offset,
-                            &auto_config, sizeof(auto_config));
-}
-
-static ssize_t write_auto_control(struct bt_conn *conn,
-                                   const struct bt_gatt_attr *attr,
-                                   const void *buf, uint16_t len,
-                                   uint16_t offset, uint8_t flags) {
-    if (offset + len > sizeof(auto_config)) {
-        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
-    }
-    
-    if (len < 4) {
-        LOG_ERR("Auto-control config too short: %d bytes", len);
-        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
-    }
-    
-    const struct auto_control_config *new_config = 
-        (const struct auto_control_config *)buf;
-    
-    // Validate thresholds
-    if (new_config->auto_on_threshold > 100 ||
-        new_config->auto_off_threshold > 100) {
-        LOG_ERR("Invalid threshold values");
-        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
-    }
-    
-    if (new_config->auto_on_threshold >= new_config->auto_off_threshold) {
-        LOG_ERR("auto_on_threshold must be < auto_off_threshold");
-        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
-    }
-    
-    // Update configuration
-    auto_config.auto_on_enable = new_config->auto_on_enable ? 1 : 0;
-    auto_config.auto_off_enable = new_config->auto_off_enable ? 1 : 0;
-    auto_config.auto_on_threshold = new_config->auto_on_threshold;
-    auto_config.auto_off_threshold = new_config->auto_off_threshold;
-    
-    LOG_INF("Auto-control config updated via BLE:");
-    LOG_INF("  Auto-ON:  %s at %d%%",
-            auto_config.auto_on_enable ? "ENABLED" : "DISABLED",
-            auto_config.auto_on_threshold);
-    LOG_INF("  Auto-OFF: %s at %d%%",
-            auto_config.auto_off_enable ? "ENABLED" : "DISABLED",
-            auto_config.auto_off_threshold);
-    
-    // Save to NVS
-    if (settings_loaded) {
-        int rc = save_auto_config();
-        if (rc != 0) {
-            LOG_ERR("Failed to save config to NVS: %d", rc);
-        } else {
-            LOG_INF("Config saved to NVS successfully");
-        }
-    }
-    
-    // Notify clients about config change
-    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[11],
-                   &auto_config, sizeof(auto_config));
-    
-    // Apply new rules immediately if needed
-    check_auto_control(last_battery_percent);
-    
-    return len;
-}
-
 /**
- * GATT Service Definition (with auto-control characteristic added)
+ * GATT Service Definition
  */
 BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
     BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
@@ -812,16 +503,7 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
                           BT_GATT_PERM_READ,
                           read_voltage, NULL, NULL),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
-    
-    // Auto-control configuration characteristic (read/write/notify)
-    BT_GATT_CHARACTERISTIC(BT_UUID_AUTO_CONTROL,
-                          BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,
-                          BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
-                          read_auto_control, write_auto_control, NULL),
-    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 );
-
-
 
 // ============================================================================
 // Initialization
@@ -856,12 +538,6 @@ static int battery_monitor_init(const struct device *dev) {
         LOG_INF("Battery voltage sensor ready");
     }
     
-    // Initialize settings (load from NVS)
-    ret = init_settings();
-    if (ret < 0) {
-        LOG_WRN("Settings init failed, using defaults");
-    }
-    
     // Configure MOSFET pin
     ret = gpio_pin_configure(gpio_dev, MOSFET_PIN, GPIO_OUTPUT_INACTIVE);
     if (ret < 0) {
@@ -874,8 +550,6 @@ static int battery_monitor_init(const struct device *dev) {
     // Initialize update work (starts inactive)
     k_work_init_delayable(&update_work, update_work_handler);
     
-  
-    
     LOG_INF("Battery Monitor initialized successfully");
     LOG_INF("  - MOSFET control: P0.%d", MOSFET_PIN);
     LOG_INF("  - Storage threshold: %d%%", STORAGE_THRESHOLD);
@@ -886,107 +560,9 @@ static int battery_monitor_init(const struct device *dev) {
     LOG_INF("  - Power saving: Auto-updates disabled (activate by reading)");
     LOG_INF("  - Update interval: %d seconds", UPDATE_INTERVAL_MS / 1000);
     LOG_INF("  - Auto-update duration: 30 minutes");
-    LOG_INF("  - NVS storage: %s", settings_loaded ? "enabled" : "disabled");
+    LOG_INF("  - Bond clear: via keymap (P0.17/D2 button)");
     
     return 0;
 }
 
 SYS_INIT(battery_monitor_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
-
-
-
-/*
- * ============================================================================
- * BLE Service Summary
- * ============================================================================
- * 
- * Service UUID: 12345678-1234-5678-1234-56789abcdef0
- * 
- * Characteristics:
- * 1. Power Control (12345678-1234-5678-1234-56789abcdef1)
- *    - Read: Get current power state (0x00=OFF, 0x01=ON)
- *    - Write: Control power (0x00=OFF, 0x01=ON, 0x02=TOGGLE)
- *    - Notify: Notifies when power state changes
- * 
- * 2. Temperature (12345678-1234-5678-1234-56789abcdef2)
- *    - Read: Get current temperature (int16_t in 0.01°C)
- *    - Notify: Updates every 10 seconds (when auto-update active)
- *    - Reading triggers 30-minute auto-update period
- * 
- * 3. Voltage (12345678-1234-5678-1234-56789abcdef3)
- *    - Read: Get current voltage (uint16_t in millivolts)
- *    - Notify: Updates every 10 seconds (when auto-update active)
- *    - Reading triggers 30-minute auto-update period
- * 
- * 4. Auto-Control Configuration (12345678-1234-5678-1234-56789abcdef4) **NEW**
- *    - Read: Get current auto-control settings (6 bytes)
- *    - Write: Configure auto-control behavior (6 bytes)
- *    - Notify: Notifies when configuration changes
- * 
- * Auto-Control Configuration Format (6 bytes):
- * - Byte 0: auto_on_enable (0=disabled, 1=enabled)
- * - Byte 1: auto_off_enable (0=disabled, 1=enabled)
- * - Byte 2: auto_on_threshold (0-100%, default 25)
- * - Byte 3: auto_off_threshold (0-100%, default 80)
- * - Byte 4-5: Reserved (must be 0x00)
- * 
- * Example BLE Write (enable auto-control):
- * [0x01, 0x01, 0x19, 0x50, 0x00, 0x00]  // Enable both, 25% ON, 80% OFF
- * 
- * ============================================================================
- * Auto-Control Logic
- * ============================================================================
- * 
- * Auto-ON Behavior:
- * - When enabled: Automatically turns MOSFET ON when battery drops to/below threshold
- * - Example: If threshold = 25%, MOSFET turns ON at 25% or lower
- * - Use case: Start charging when battery is low
- * - Priority: Runs BEFORE storage mode check
- * 
- * Auto-OFF Behavior:
- * - When enabled: Automatically turns MOSFET OFF when battery rises to/above threshold
- * - Example: If threshold = 80%, MOSFET turns OFF at 80% or higher
- * - Use case: Stop charging when battery is sufficiently charged
- * - Priority: Runs BEFORE storage mode check
- * 
- * Configuration Rules:
- * - auto_on_threshold MUST be < auto_off_threshold (prevents oscillation)
- * - Both thresholds must be 0-100%
- * - Settings are saved to NVS (persistent across power loss)
- * - Can be enabled/disabled independently
- * 
- * Example Scenarios:
- * 
- * 1. Battery Charging Control:
- *    - auto_on_enable = 1, auto_on_threshold = 20%
- *    - auto_off_enable = 1, auto_off_threshold = 90%
- *    → Start charging at 20%, stop at 90%
- * 
- * 2. Load Management:
- *    - auto_on_enable = 0
- *    - auto_off_enable = 1, auto_off_threshold = 30%
- *    → Disconnect load when battery drops to 30%
- * 
- * 3. Disabled (Manual Control Only):
- *    - auto_on_enable = 0
- *    - auto_off_enable = 0
- *    → No automatic control, manual BLE commands only
- * 
- * ============================================================================
- * NVS Storage
- * ============================================================================
- * 
- * Settings are stored in NVS (Non-Volatile Storage) with these keys:
- * - battery_monitor/auto_on_en
- * - battery_monitor/auto_off_en
- * - battery_monitor/auto_on_th
- * - battery_monitor/auto_off_th
- * 
- * Storage Behavior:
- * - Automatically loaded at boot
- * - Saved immediately when changed via BLE
- * - Survives power loss, firmware updates (if not erased)
- * - Can be reset by clearing NVS partition
- * 
- 
- */
