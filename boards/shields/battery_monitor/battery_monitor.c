@@ -874,11 +874,7 @@ static int battery_monitor_init(const struct device *dev) {
     // Initialize update work (starts inactive)
     k_work_init_delayable(&update_work, update_work_handler);
     
-    // Initialize reed switch
-    ret = init_reed_switch();
-    if (ret < 0) {
-        LOG_WRN("Reed switch initialization failed, continuing without it");
-    }
+
     
     LOG_INF("Battery Monitor initialized successfully");
     LOG_INF("  - MOSFET control: P0.%d", MOSFET_PIN);
