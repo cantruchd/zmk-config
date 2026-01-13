@@ -303,11 +303,11 @@ static struct settings_handler settings_handler = {
 static int init_settings(void) {
     int rc;
     
-    rc = settings_subsys_init();
-    if (rc != 0) {
-        LOG_ERR("Settings subsys init failed: %d", rc);
-        return rc;
-    }
+    // rc = settings_subsys_init();UI
+    // if (rc != 0) {
+    //     LOG_ERR("Settings subsys init failed: %d", rc);
+    //     return rc;
+    // }
     
     rc = settings_register(&settings_handler);
     if (rc != 0) {
