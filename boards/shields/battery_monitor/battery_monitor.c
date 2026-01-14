@@ -359,8 +359,14 @@ static int16_t read_ntc_temperature(void) {
     
     int16_t temp_hundredths = (int16_t)(temp_celsius * 100.0f);
     
-    LOG_DBG("NTC: %d mV, %.1f kΩ, %.2f°C", 
-            val_mv, ntc_resistance/1000.0f, temp_celsius);
+    // Tách float thành int để log
+    int resistance_int = (int)(ntc_resistance / 1000.0f);
+    int resistance_frac = (int)((ntc_resistance / 1000.0f - resistance_int) * 10);
+    int temp_int = (int)temp_celsius;
+    int temp_frac = (int)((temp_celsius - temp_int) * 100);
+    
+    LOG_DBG("NTC: %d mV, %d.%d kΩ, %d.%02d°C", 
+            val_mv, resistance_int, resistance_frac, temp_int, temp_frac);
     
     return temp_hundredths;
 }
@@ -446,12 +452,18 @@ static int16_t read_internal_temp(void) {
 // Sensors Update
 // ============================================================================
 
-static void update_all_sensors(void) {
+sstatic void update_all_sensors(void) {
     temp_internal = read_internal_temp();
-    LOG_INF("Internal temp: %.2f°C", temp_internal / 100.0f);
+    // Tách float thành int
+    int temp_int_int = temp_internal / 100;
+    int temp_int_frac = abs(temp_internal % 100);
+    LOG_INF("Internal temp: %d.%02d°C", temp_int_int, temp_int_frac);
     
     temp_external = read_ntc_temperature();
-    LOG_INF("External temp: %.2f°C", temp_external / 100.0f);
+    // Tách float thành int
+    int temp_ext_int = temp_external / 100;
+    int temp_ext_frac = abs(temp_external % 100);
+    LOG_INF("External temp: %d.%02d°C", temp_ext_int, temp_ext_frac);
     
     read_battery_voltage();
     
@@ -459,6 +471,7 @@ static void update_all_sensors(void) {
     bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], &current_voltage_mv, sizeof(current_voltage_mv));
     bt_gatt_notify(NULL, &battery_monitor_svc.attrs[11], &temp_external, sizeof(temp_external));
 }
+
 
 static void update_work_handler(struct k_work *work) {
     if (!should_auto_update()) return;
