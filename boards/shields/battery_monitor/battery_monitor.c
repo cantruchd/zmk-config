@@ -1,11 +1,11 @@
 /*
  * battery_monitor.c
- * Custom battery monitoring with Auto MOSFET control and NVS settings
+ * Custom battery monitoring with Auto MOSFET control and ZMK Settings storage
  * 
  * Features:
  * - Auto MOSFET ON when battery < threshold (e.g. 30%)
  * - Auto MOSFET OFF when battery > threshold (e.g. 80%)
- * - All settings saved to NVS (survive reboot)
+ * - All settings saved via ZMK Settings (like ZMK Studio)
  * - BLE control for all settings
  * - Dual temperature monitoring (internal + NTC)
  */
@@ -21,7 +21,6 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/reboot.h>
-#include <zephyr/settings/settings.h>
 #include <stdlib.h>
 #include <math.h>
 
@@ -30,6 +29,7 @@
 #include <zmk/events/battery_state_changed.h>
 #include <zmk/events/position_state_changed.h>
 #include <zmk/event_manager.h>
+#include <zmk/settings.h>
 #include <hal/nrf_power.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -59,12 +59,12 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define AUTO_UPDATE_DURATION_MS 1800000
 
 // NVS Settings keys
-#define SETTINGS_NAME "battery_monitor"
-#define KEY_AUTO_ON_EN "auto_on_en"
-#define KEY_AUTO_OFF_EN "auto_off_en"
-#define KEY_AUTO_ON "auto_on"
-#define KEY_AUTO_OFF "auto_off"
-#define KEY_STORAGE "storage"
+#define SETTINGS_SUBTREE "battery_monitor"
+#define SETTING_AUTO_ON_EN "aon_en"
+#define SETTING_AUTO_OFF_EN "aoff_en"
+#define SETTING_AUTO_ON "aon"
+#define SETTING_AUTO_OFF "aoff"
+#define SETTING_STORAGE "stor"
 
 // ============================================================================
 // BLE UUIDs
@@ -205,107 +205,90 @@ static ssize_t write_auto_settings(struct bt_conn *conn,
                                     uint16_t offset, uint8_t flags);
 
 // ============================================================================
-// NVS Settings Management
+// ZMK Settings Management (like ZMK Studio)
 // ============================================================================
 
 static int save_settings(void) {
-    char path[64];
     int rc;
 
-    snprintf(path, sizeof(path), SETTINGS_NAME "/%s", KEY_AUTO_ON_EN);
-    rc = settings_save_one(path, &auto_settings.auto_on_enabled, sizeof(auto_settings.auto_on_enabled));
-    if (rc) {
+    rc = zmk_settings_save_uint8(SETTINGS_SUBTREE, SETTING_AUTO_ON_EN, 
+                                  auto_settings.auto_on_enabled ? 1 : 0);
+    if (rc < 0) {
         LOG_ERR("Failed to save auto_on_en: %d", rc);
         return rc;
     }
 
-    snprintf(path, sizeof(path), SETTINGS_NAME "/%s", KEY_AUTO_OFF_EN);
-    rc = settings_save_one(path, &auto_settings.auto_off_enabled, sizeof(auto_settings.auto_off_enabled));
-    if (rc) {
+    rc = zmk_settings_save_uint8(SETTINGS_SUBTREE, SETTING_AUTO_OFF_EN, 
+                                  auto_settings.auto_off_enabled ? 1 : 0);
+    if (rc < 0) {
         LOG_ERR("Failed to save auto_off_en: %d", rc);
         return rc;
     }
 
-    snprintf(path, sizeof(path), SETTINGS_NAME "/%s", KEY_AUTO_ON);
-    rc = settings_save_one(path, &auto_settings.auto_on_percent, sizeof(auto_settings.auto_on_percent));
-    if (rc) {
+    rc = zmk_settings_save_uint8(SETTINGS_SUBTREE, SETTING_AUTO_ON, 
+                                  auto_settings.auto_on_percent);
+    if (rc < 0) {
         LOG_ERR("Failed to save auto_on: %d", rc);
         return rc;
     }
 
-    snprintf(path, sizeof(path), SETTINGS_NAME "/%s", KEY_AUTO_OFF);
-    rc = settings_save_one(path, &auto_settings.auto_off_percent, sizeof(auto_settings.auto_off_percent));
-    if (rc) {
+    rc = zmk_settings_save_uint8(SETTINGS_SUBTREE, SETTING_AUTO_OFF, 
+                                  auto_settings.auto_off_percent);
+    if (rc < 0) {
         LOG_ERR("Failed to save auto_off: %d", rc);
         return rc;
     }
 
-    snprintf(path, sizeof(path), SETTINGS_NAME "/%s", KEY_STORAGE);
-    rc = settings_save_one(path, &auto_settings.storage_percent, sizeof(auto_settings.storage_percent));
-    if (rc) {
+    rc = zmk_settings_save_uint8(SETTINGS_SUBTREE, SETTING_STORAGE, 
+                                  auto_settings.storage_percent);
+    if (rc < 0) {
         LOG_ERR("Failed to save storage: %d", rc);
         return rc;
     }
 
-    LOG_INF("Settings saved to NVS");
+    LOG_INF("Settings saved via ZMK Settings");
     return 0;
 }
 
-static int settings_set_handler(const char *name, size_t len,
-                                settings_read_cb read_cb, void *cb_arg) {
-    const char *next;
+static int load_settings(void) {
+    uint8_t val;
     int rc;
 
-    if (settings_name_steq(name, KEY_AUTO_ON_EN, &next) && !next) {
-        if (len != sizeof(auto_settings.auto_on_enabled)) {
-            return -EINVAL;
-        }
-        rc = read_cb(cb_arg, &auto_settings.auto_on_enabled, sizeof(auto_settings.auto_on_enabled));
+    // Load auto_on_enabled
+    rc = zmk_settings_load_uint8(SETTINGS_SUBTREE, SETTING_AUTO_ON_EN, &val);
+    if (rc == 0) {
+        auto_settings.auto_on_enabled = (val != 0);
         LOG_INF("Loaded auto_on_enabled: %d", auto_settings.auto_on_enabled);
-        return rc;
     }
 
-    if (settings_name_steq(name, KEY_AUTO_OFF_EN, &next) && !next) {
-        if (len != sizeof(auto_settings.auto_off_enabled)) {
-            return -EINVAL;
-        }
-        rc = read_cb(cb_arg, &auto_settings.auto_off_enabled, sizeof(auto_settings.auto_off_enabled));
+    // Load auto_off_enabled
+    rc = zmk_settings_load_uint8(SETTINGS_SUBTREE, SETTING_AUTO_OFF_EN, &val);
+    if (rc == 0) {
+        auto_settings.auto_off_enabled = (val != 0);
         LOG_INF("Loaded auto_off_enabled: %d", auto_settings.auto_off_enabled);
-        return rc;
     }
 
-    if (settings_name_steq(name, KEY_AUTO_ON, &next) && !next) {
-        if (len != sizeof(auto_settings.auto_on_percent)) {
-            return -EINVAL;
-        }
-        rc = read_cb(cb_arg, &auto_settings.auto_on_percent, sizeof(auto_settings.auto_on_percent));
+    // Load auto_on_percent
+    rc = zmk_settings_load_uint8(SETTINGS_SUBTREE, SETTING_AUTO_ON, &val);
+    if (rc == 0) {
+        auto_settings.auto_on_percent = val;
         LOG_INF("Loaded auto_on: %d%%", auto_settings.auto_on_percent);
-        return rc;
     }
 
-    if (settings_name_steq(name, KEY_AUTO_OFF, &next) && !next) {
-        if (len != sizeof(auto_settings.auto_off_percent)) {
-            return -EINVAL;
-        }
-        rc = read_cb(cb_arg, &auto_settings.auto_off_percent, sizeof(auto_settings.auto_off_percent));
+    // Load auto_off_percent
+    rc = zmk_settings_load_uint8(SETTINGS_SUBTREE, SETTING_AUTO_OFF, &val);
+    if (rc == 0) {
+        auto_settings.auto_off_percent = val;
         LOG_INF("Loaded auto_off: %d%%", auto_settings.auto_off_percent);
-        return rc;
     }
 
-    if (settings_name_steq(name, KEY_STORAGE, &next) && !next) {
-        if (len != sizeof(auto_settings.storage_percent)) {
-            return -EINVAL;
-        }
-        rc = read_cb(cb_arg, &auto_settings.storage_percent, sizeof(auto_settings.storage_percent));
+    // Load storage_percent
+    rc = zmk_settings_load_uint8(SETTINGS_SUBTREE, SETTING_STORAGE, &val);
+    if (rc == 0) {
+        auto_settings.storage_percent = val;
         LOG_INF("Loaded storage: %d%%", auto_settings.storage_percent);
-        return rc;
     }
 
-    return -ENOENT;
-}
-
-static int settings_commit_handler(void) {
-    settings_loaded = true;
     LOG_INF("Settings loaded successfully");
     LOG_INF("  Auto ON: %s at <%d%%", 
             auto_settings.auto_on_enabled ? "ENABLED" : "DISABLED",
@@ -314,11 +297,9 @@ static int settings_commit_handler(void) {
             auto_settings.auto_off_enabled ? "ENABLED" : "DISABLED",
             auto_settings.auto_off_percent);
     LOG_INF("  Storage at: %d%%", auto_settings.storage_percent);
+
     return 0;
 }
-
-SETTINGS_STATIC_HANDLER_DEFINE(battery_monitor_settings, SETTINGS_NAME, NULL,
-                               settings_set_handler, settings_commit_handler, NULL);
 
 // ============================================================================
 // Bootloader Control
@@ -922,15 +903,8 @@ static int battery_monitor_init(const struct device *dev) {
     
     LOG_INF("Initializing Battery Monitor with Auto MOSFET...");
     
-    // Initialize settings subsystem
-    ret = settings_subsys_init();
-    if (ret) {
-        LOG_ERR("Failed to init settings: %d", ret);
-        return ret;
-    }
-    
-    // Load settings from NVS
-    ret = settings_load();
+    // Load settings from ZMK Settings
+    ret = load_settings();
     if (ret) {
         LOG_WRN("Failed to load settings: %d (using defaults)", ret);
     }
@@ -990,6 +964,7 @@ static int battery_monitor_init(const struct device *dev) {
     LOG_INF("  External NTC: enabled (P0.28/A4)");
     LOG_INF("  NTC config: 10K@25C, B=%d", NTC_B_COEFFICIENT);
     LOG_INF("  Voltage sensor: %s", battery_dev ? "enabled" : "disabled");
+    LOG_INF("  Settings: ZMK Settings API (like ZMK Studio)");
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     LOG_INF("⚙️  AUTO MOSFET SETTINGS:");
     LOG_INF("  Auto ON: %s at Battery < %d%%", 
@@ -1011,6 +986,13 @@ SYS_INIT(battery_monitor_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
  * AUTO MOSFET FEATURE DOCUMENTATION
  * ============================================================================
  * 
+ * STORAGE METHOD:
+ * ---------------
+ * Uses ZMK Settings API (same as ZMK Studio) instead of raw NVS
+ * - More reliable and compatible with ZMK ecosystem
+ * - Settings persist across reboots and firmware updates
+ * - No need to configure NVS partitions manually
+ * 
  * FEATURE OVERVIEW:
  * ----------------
  * Automatically controls MOSFET based on battery percentage with INDEPENDENT
@@ -1024,7 +1006,7 @@ SYS_INIT(battery_monitor_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
  *    - When battery > auto_off_percent (default 80%)
  *    - MOSFET turns OFF to stop charging
  * 
- * 3. All settings saved to NVS (survive reboot)
+ * 3. All settings saved via ZMK Settings API (survive reboot)
  * 
  * INDEPENDENT CONTROL EXAMPLES:
  * ----------------------------
@@ -1159,19 +1141,36 @@ SYS_INIT(battery_monitor_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
  * Battery = 85% → Auto OFF → MOSFET OFF → Stop charging
  * 
  * 
- * NVS STORAGE:
- * ------------
- * Settings stored in flash memory under "battery_monitor" namespace:
- * - battery_monitor/auto_on_en   (bool)
- * - battery_monitor/auto_off_en  (bool)
- * - battery_monitor/auto_on      (uint8_t)
- * - battery_monitor/auto_off     (uint8_t)
- * - battery_monitor/storage      (uint8_t)
+ * ZMK SETTINGS STORAGE:
+ * ---------------------
+ * Settings stored using ZMK Settings API:
+ * - battery_monitor/aon_en    (auto_on_enabled)
+ * - battery_monitor/aoff_en   (auto_off_enabled)
+ * - battery_monitor/aon       (auto_on_percent)
+ * - battery_monitor/aoff      (auto_off_percent)
+ * - battery_monitor/stor      (storage_percent)
+ * 
+ * Advantages over raw NVS:
+ * - Compatible with ZMK Studio
+ * - Automatic persistence management
+ * - No manual partition configuration
+ * - Better error handling
+ * - Consistent with ZMK ecosystem
  * 
  * Settings persist across:
  * - Device reboots
  * - Power cycles
- * - Firmware updates (if NVS partition preserved)
+ * - Firmware updates
+ * 
+ * REQUIRED CONFIG:
+ * ----------------
+ * Add to prj.conf:
+ * ```
+ * # ZMK Settings (automatically includes necessary NVS/Flash configs)
+ * CONFIG_ZMK_SETTINGS=y
+ * ```
+ * 
+ * No additional NVS configuration needed!
  * 
  * ============================================================================
  */
