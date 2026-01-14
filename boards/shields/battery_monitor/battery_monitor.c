@@ -1,19 +1,13 @@
 /*
  * battery_monitor.c
- * Custom battery monitoring, MOSFET control, and dual temperature reporting
- * 
- * Location: config/boards/shields/battery_monitor/battery_monitor.c
+ * Custom battery monitoring with Auto MOSFET control and NVS settings
  * 
  * Features:
- * - MOSFET control for battery power (on/off/toggle)
- * - Automatic storage mode at 40%
- * - Low battery warnings
- * - Dual temperature monitoring:
- *   * Internal: nRF52840 die temperature
- *   * External: NTC thermistor (10K) via ADC
- * - Voltage monitoring and BLE reporting
- * - Smart power saving: Auto-updates 30min after first read, then stops
- * - Bootloader control via BLE (enter flash/DFU mode remotely)
+ * - Auto MOSFET ON when battery < threshold (e.g. 30%)
+ * - Auto MOSFET OFF when battery > threshold (e.g. 80%)
+ * - All settings saved to NVS (survive reboot)
+ * - BLE control for all settings
+ * - Dual temperature monitoring (internal + NTC)
  */
 
 #include <zephyr/device.h>
@@ -27,6 +21,7 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/reboot.h>
+#include <zephyr/settings/settings.h>
 #include <stdlib.h>
 #include <math.h>
 
@@ -43,25 +38,33 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // Configuration Constants
 // ============================================================================
 
-// GPIO pins
-#define MOSFET_PIN  24  // P0.24 = D5 on nice!nano
+#define MOSFET_PIN  24
 
-// NTC Thermistor Configuration
-#define NTC_ADC_PIN           4    // AIN4 = P0.28 = A4 on nice!nano
-#define NTC_REFERENCE_MV      3300 // 3.3V reference
-#define NTC_SERIES_RESISTOR   10000 // 10K ohm series resistor
-#define NTC_NOMINAL_RESISTANCE 10000 // 10K thermistor at 25°C
-#define NTC_NOMINAL_TEMP      25.0  // 25°C
-#define NTC_B_COEFFICIENT     3950  // B value for 10K NTC
+// NTC Configuration
+#define NTC_ADC_PIN           4
+#define NTC_REFERENCE_MV      3300
+#define NTC_SERIES_RESISTOR   10000
+#define NTC_NOMINAL_RESISTANCE 10000
+#define NTC_NOMINAL_TEMP      25.0
+#define NTC_B_COEFFICIENT     3950
 
-// Battery thresholds (percentage)
-#define STORAGE_THRESHOLD   40
-#define LOW_WARNING         35
-#define CRITICAL_LOW        20
+// Default thresholds
+#define DEFAULT_AUTO_ON_ENABLE    true
+#define DEFAULT_AUTO_OFF_ENABLE   true
+#define DEFAULT_AUTO_ON_PERCENT   30  // Bật MOSFET khi pin < 30%
+#define DEFAULT_AUTO_OFF_PERCENT  80  // Tắt MOSFET khi pin > 80%
+#define DEFAULT_STORAGE_PERCENT   40
 
-// Update intervals
 #define UPDATE_INTERVAL_MS      10000
 #define AUTO_UPDATE_DURATION_MS 1800000
+
+// NVS Settings keys
+#define SETTINGS_NAME "battery_monitor"
+#define KEY_AUTO_ON_EN "auto_on_en"
+#define KEY_AUTO_OFF_EN "auto_off_en"
+#define KEY_AUTO_ON "auto_on"
+#define KEY_AUTO_OFF "auto_off"
+#define KEY_STORAGE "storage"
 
 // ============================================================================
 // BLE UUIDs
@@ -92,11 +95,16 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define BT_UUID_BOOTLOADER \
     BT_UUID_DECLARE_128(BT_UUID_BOOTLOADER_VAL)
 
-// ⭐ NEW: External NTC temperature UUID
 #define BT_UUID_TEMP_EXTERNAL_VAL \
     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef5)
 #define BT_UUID_TEMP_EXTERNAL \
     BT_UUID_DECLARE_128(BT_UUID_TEMP_EXTERNAL_VAL)
+
+// ⭐ NEW: Auto MOSFET settings UUID
+#define BT_UUID_AUTO_SETTINGS_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef6)
+#define BT_UUID_AUTO_SETTINGS \
+    BT_UUID_DECLARE_128(BT_UUID_AUTO_SETTINGS_VAL)
 
 // Commands
 #define CMD_POWER_OFF    0x00
@@ -106,7 +114,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define CMD_RESET_DEVICE     0x52
 
 // ============================================================================
-// ADC Configuration for NTC
+// ADC Configuration
 // ============================================================================
 
 #if !DT_NODE_EXISTS(DT_PATH(zephyr_user)) || \
@@ -122,6 +130,18 @@ static const struct adc_dt_spec adc_channels[] = {
 };
 
 // ============================================================================
+// Auto MOSFET Settings Structure
+// ============================================================================
+
+struct auto_mosfet_settings {
+    bool auto_on_enabled;      // Enable auto ON when battery low
+    bool auto_off_enabled;     // Enable auto OFF when battery high
+    uint8_t auto_on_percent;   // Bật MOSFET khi pin < giá trị này
+    uint8_t auto_off_percent;  // Tắt MOSFET khi pin > giá trị này
+    uint8_t storage_percent;   // Storage mode threshold
+};
+
+// ============================================================================
 // Global Variables
 // ============================================================================
 
@@ -131,8 +151,8 @@ static const struct device *battery_dev;
 static bool power_state = false;
 static uint8_t last_battery_percent = 100;
 
-static int16_t temp_internal = 0;      // Internal temp in 0.01°C
-static int16_t temp_external = 0;      // External NTC temp in 0.01°C
+static int16_t temp_internal = 0;
+static int16_t temp_external = 0;
 static uint16_t current_voltage_mv = 0;
 
 static bool auto_update_active = false;
@@ -141,6 +161,17 @@ static struct k_work_delayable update_work;
 static struct k_work_delayable bootloader_work;
 
 static enum sensor_channel discovered_channel = SENSOR_CHAN_PRIV_START;
+
+// ⭐ Auto MOSFET settings (loaded from NVS)
+static struct auto_mosfet_settings auto_settings = {
+    .auto_on_enabled = DEFAULT_AUTO_ON_ENABLE,
+    .auto_off_enabled = DEFAULT_AUTO_OFF_ENABLE,
+    .auto_on_percent = DEFAULT_AUTO_ON_PERCENT,
+    .auto_off_percent = DEFAULT_AUTO_OFF_PERCENT,
+    .storage_percent = DEFAULT_STORAGE_PERCENT,
+};
+
+static bool settings_loaded = false;
 
 extern const struct bt_gatt_service_static battery_monitor_svc;
 
@@ -165,14 +196,137 @@ static ssize_t write_bootloader(struct bt_conn *conn,
                                  const struct bt_gatt_attr *attr,
                                  const void *buf, uint16_t len,
                                  uint16_t offset, uint8_t flags);
+static ssize_t read_auto_settings(struct bt_conn *conn,
+                                   const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset);
+static ssize_t write_auto_settings(struct bt_conn *conn,
+                                    const struct bt_gatt_attr *attr,
+                                    const void *buf, uint16_t len,
+                                    uint16_t offset, uint8_t flags);
+
+// ============================================================================
+// NVS Settings Management
+// ============================================================================
+
+static int save_settings(void) {
+    char path[64];
+    int rc;
+
+    snprintf(path, sizeof(path), SETTINGS_NAME "/%s", KEY_AUTO_ON_EN);
+    rc = settings_save_one(path, &auto_settings.auto_on_enabled, sizeof(auto_settings.auto_on_enabled));
+    if (rc) {
+        LOG_ERR("Failed to save auto_on_en: %d", rc);
+        return rc;
+    }
+
+    snprintf(path, sizeof(path), SETTINGS_NAME "/%s", KEY_AUTO_OFF_EN);
+    rc = settings_save_one(path, &auto_settings.auto_off_enabled, sizeof(auto_settings.auto_off_enabled));
+    if (rc) {
+        LOG_ERR("Failed to save auto_off_en: %d", rc);
+        return rc;
+    }
+
+    snprintf(path, sizeof(path), SETTINGS_NAME "/%s", KEY_AUTO_ON);
+    rc = settings_save_one(path, &auto_settings.auto_on_percent, sizeof(auto_settings.auto_on_percent));
+    if (rc) {
+        LOG_ERR("Failed to save auto_on: %d", rc);
+        return rc;
+    }
+
+    snprintf(path, sizeof(path), SETTINGS_NAME "/%s", KEY_AUTO_OFF);
+    rc = settings_save_one(path, &auto_settings.auto_off_percent, sizeof(auto_settings.auto_off_percent));
+    if (rc) {
+        LOG_ERR("Failed to save auto_off: %d", rc);
+        return rc;
+    }
+
+    snprintf(path, sizeof(path), SETTINGS_NAME "/%s", KEY_STORAGE);
+    rc = settings_save_one(path, &auto_settings.storage_percent, sizeof(auto_settings.storage_percent));
+    if (rc) {
+        LOG_ERR("Failed to save storage: %d", rc);
+        return rc;
+    }
+
+    LOG_INF("Settings saved to NVS");
+    return 0;
+}
+
+static int settings_set_handler(const char *name, size_t len,
+                                settings_read_cb read_cb, void *cb_arg) {
+    const char *next;
+    int rc;
+
+    if (settings_name_steq(name, KEY_AUTO_ON_EN, &next) && !next) {
+        if (len != sizeof(auto_settings.auto_on_enabled)) {
+            return -EINVAL;
+        }
+        rc = read_cb(cb_arg, &auto_settings.auto_on_enabled, sizeof(auto_settings.auto_on_enabled));
+        LOG_INF("Loaded auto_on_enabled: %d", auto_settings.auto_on_enabled);
+        return rc;
+    }
+
+    if (settings_name_steq(name, KEY_AUTO_OFF_EN, &next) && !next) {
+        if (len != sizeof(auto_settings.auto_off_enabled)) {
+            return -EINVAL;
+        }
+        rc = read_cb(cb_arg, &auto_settings.auto_off_enabled, sizeof(auto_settings.auto_off_enabled));
+        LOG_INF("Loaded auto_off_enabled: %d", auto_settings.auto_off_enabled);
+        return rc;
+    }
+
+    if (settings_name_steq(name, KEY_AUTO_ON, &next) && !next) {
+        if (len != sizeof(auto_settings.auto_on_percent)) {
+            return -EINVAL;
+        }
+        rc = read_cb(cb_arg, &auto_settings.auto_on_percent, sizeof(auto_settings.auto_on_percent));
+        LOG_INF("Loaded auto_on: %d%%", auto_settings.auto_on_percent);
+        return rc;
+    }
+
+    if (settings_name_steq(name, KEY_AUTO_OFF, &next) && !next) {
+        if (len != sizeof(auto_settings.auto_off_percent)) {
+            return -EINVAL;
+        }
+        rc = read_cb(cb_arg, &auto_settings.auto_off_percent, sizeof(auto_settings.auto_off_percent));
+        LOG_INF("Loaded auto_off: %d%%", auto_settings.auto_off_percent);
+        return rc;
+    }
+
+    if (settings_name_steq(name, KEY_STORAGE, &next) && !next) {
+        if (len != sizeof(auto_settings.storage_percent)) {
+            return -EINVAL;
+        }
+        rc = read_cb(cb_arg, &auto_settings.storage_percent, sizeof(auto_settings.storage_percent));
+        LOG_INF("Loaded storage: %d%%", auto_settings.storage_percent);
+        return rc;
+    }
+
+    return -ENOENT;
+}
+
+static int settings_commit_handler(void) {
+    settings_loaded = true;
+    LOG_INF("Settings loaded successfully");
+    LOG_INF("  Auto ON: %s at <%d%%", 
+            auto_settings.auto_on_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.auto_on_percent);
+    LOG_INF("  Auto OFF: %s at >%d%%", 
+            auto_settings.auto_off_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.auto_off_percent);
+    LOG_INF("  Storage at: %d%%", auto_settings.storage_percent);
+    return 0;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(battery_monitor_settings, SETTINGS_NAME, NULL,
+                               settings_set_handler, settings_commit_handler, NULL);
 
 // ============================================================================
 // Bootloader Control
 // ============================================================================
-static bool bootloader_intentional = false;  // Flag để phân biệt intentional vs accidental
+
+static bool bootloader_intentional = false;
 
 static void enter_bootloader_mode(void) {
-
     if (!bootloader_intentional) {
         LOG_ERR("Bootloader trigger blocked - not intentional");
         return;
@@ -180,10 +334,9 @@ static void enter_bootloader_mode(void) {
     LOG_WRN("========================================");
     LOG_WRN("ENTERING BOOTLOADER VIA KEYMAP");
     LOG_WRN("========================================");
-    bootloader_intentional = false;  // Reset flag
+    bootloader_intentional = false;
     
     k_sleep(K_MSEC(100));
-
     
     raise_zmk_position_state_changed(
         (struct zmk_position_state_changed){
@@ -202,7 +355,6 @@ static void enter_bootloader_mode(void) {
             .timestamp = k_uptime_get()
         }
     );
-
 }
 
 static void reset_device(void) {
@@ -246,14 +398,9 @@ static bool should_auto_update(void) {
 }
 
 // ============================================================================
-// NTC Thermistor Reading (External Temperature)
+// NTC Thermistor Reading
 // ============================================================================
 
-/**
- * Read NTC thermistor via ADC and calculate temperature
- * Uses Steinhart-Hart equation
- * @return temperature in 0.01°C
- */
 static int16_t read_ntc_temperature(void) {
     int err;
     uint16_t buf;
@@ -262,7 +409,6 @@ static int16_t read_ntc_temperature(void) {
         .buffer_size = sizeof(buf),
     };
     
-    // Use first ADC channel (NTC thermistor)
     if (ARRAY_SIZE(adc_channels) == 0) {
         LOG_ERR("No ADC channels configured");
         return 0;
@@ -282,17 +428,12 @@ static int16_t read_ntc_temperature(void) {
         return 0;
     }
     
-    // Convert ADC reading to millivolts
     int32_t val_mv = buf;
     err = adc_raw_to_millivolts_dt(channel, &val_mv);
     if (err < 0) {
         LOG_ERR("Failed to convert to mV: %d", err);
         return 0;
     }
-    
-    // Calculate NTC resistance using voltage divider
-    // V_out = V_in * (R_ntc / (R_series + R_ntc))
-    // R_ntc = R_series * V_out / (V_in - V_out)
     
     if (val_mv >= NTC_REFERENCE_MV) {
         LOG_WRN("NTC voltage at max - thermistor may be disconnected");
@@ -304,16 +445,11 @@ static int16_t read_ntc_temperature(void) {
     
     float ntc_resistance = NTC_SERIES_RESISTOR * voltage / (v_ref - voltage);
     
-    // Steinhart-Hart simplified (B parameter equation)
-    // 1/T = 1/T0 + (1/B) * ln(R/R0)
-    // T in Kelvin
-    
     float ln_ratio = logf(ntc_resistance / NTC_NOMINAL_RESISTANCE);
     float temp_kelvin = 1.0f / ((1.0f / (NTC_NOMINAL_TEMP + 273.15f)) + 
                                 (ln_ratio / NTC_B_COEFFICIENT));
     float temp_celsius = temp_kelvin - 273.15f;
     
-    // Convert to 0.01°C
     int16_t temp_hundredths = (int16_t)(temp_celsius * 100.0f);
     
     LOG_DBG("NTC: %d mV, %.1f kΩ, %.2f°C", 
@@ -406,18 +542,14 @@ static int16_t read_internal_temp(void) {
 // ============================================================================
 
 static void update_all_sensors(void) {
-    // Read internal temperature
     temp_internal = read_internal_temp();
     LOG_INF("Internal temp: %.2f°C", temp_internal / 100.0f);
     
-    // Read external NTC temperature
     temp_external = read_ntc_temperature();
     LOG_INF("External temp: %.2f°C", temp_external / 100.0f);
     
-    // Read voltage
     read_battery_voltage();
     
-    // Notify BLE clients
     bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], 
                    &temp_internal, sizeof(temp_internal));
     bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], 
@@ -478,6 +610,30 @@ bool battery_monitor_get_power_state(void) {
 }
 
 // ============================================================================
+// ⭐ Auto MOSFET Control Logic
+// ============================================================================
+
+static void check_auto_mosfet(uint8_t percent) {
+    // Check AUTO ON (independent control)
+    if (auto_settings.auto_on_enabled) {
+        if (percent < auto_settings.auto_on_percent && !power_state) {
+            LOG_WRN("🔋 AUTO ON: Battery %d%% < %d%% - Enabling MOSFET", 
+                    percent, auto_settings.auto_on_percent);
+            set_power_state(true);
+        }
+    }
+    
+    // Check AUTO OFF (independent control)
+    if (auto_settings.auto_off_enabled) {
+        if (percent > auto_settings.auto_off_percent && power_state) {
+            LOG_INF("🔌 AUTO OFF: Battery %d%% > %d%% - Disabling MOSFET", 
+                    percent, auto_settings.auto_off_percent);
+            set_power_state(false);
+        }
+    }
+}
+
+// ============================================================================
 // Battery Level Monitoring
 // ============================================================================
 
@@ -488,19 +644,24 @@ static int battery_level_listener(const zmk_event_t *eh) {
     uint8_t percent = ev->state_of_charge;
     LOG_INF("Battery: %d%%", percent);
     
-    if (percent <= STORAGE_THRESHOLD && power_state) {
+    // ⭐ Check auto MOSFET first
+    check_auto_mosfet(percent);
+    
+    // Storage mode (always active)
+    if (percent <= auto_settings.storage_percent && power_state) {
         LOG_WRN("Storage mode at %d%%", percent);
         set_power_state(false);
     }
     
-    if (percent <= LOW_WARNING && percent > CRITICAL_LOW) {
-        if (last_battery_percent > LOW_WARNING) {
+    // Warnings
+    if (percent <= 35 && percent > 20) {
+        if (last_battery_percent > 35) {
             LOG_WRN("Battery low: %d%%", percent);
         }
     }
     
-    if (percent <= CRITICAL_LOW) {
-        if (last_battery_percent > CRITICAL_LOW) {
+    if (percent <= 20) {
+        if (last_battery_percent > 20) {
             LOG_ERR("Battery critical: %d%%", percent);
         }
         if (power_state) {
@@ -516,7 +677,7 @@ ZMK_LISTENER(battery_monitor, battery_level_listener);
 ZMK_SUBSCRIPTION(battery_monitor, zmk_battery_state_changed);
 
 // ============================================================================
-// BLE GATT Service
+// BLE GATT Handlers
 // ============================================================================
 
 static ssize_t read_power_control(struct bt_conn *conn,
@@ -608,7 +769,7 @@ static ssize_t write_bootloader(struct bt_conn *conn,
     switch (cmd) {
         case CMD_ENTER_BOOTLOADER:
             LOG_WRN("⚠️  BOOTLOADER in 2s");
-            bootloader_intentional = true;// Set flag
+            bootloader_intentional = true;
             k_work_reschedule(&bootloader_work, K_MSEC(2000));
             break;
         case CMD_RESET_DEVICE:
@@ -621,6 +782,90 @@ static ssize_t write_bootloader(struct bt_conn *conn,
     }
     return len;
 }
+
+// ⭐ NEW: Read Auto Settings (6 bytes)
+// Format: [auto_on_en:1][auto_off_en:1][auto_on:1][auto_off:1][storage:1][reserved:1]
+static ssize_t read_auto_settings(struct bt_conn *conn,
+                                   const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset) {
+    uint8_t data[6];
+    data[0] = auto_settings.auto_on_enabled ? 0x01 : 0x00;
+    data[1] = auto_settings.auto_off_enabled ? 0x01 : 0x00;
+    data[2] = auto_settings.auto_on_percent;
+    data[3] = auto_settings.auto_off_percent;
+    data[4] = auto_settings.storage_percent;
+    data[5] = 0x00;  // Reserved
+    
+    LOG_INF("Read auto settings: ON_EN=%d, OFF_EN=%d, ON<%d%%, OFF>%d%%, STOR=%d%%",
+            data[0], data[1], data[2], data[3], data[4]);
+    
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, data, sizeof(data));
+}
+
+// ⭐ NEW: Write Auto Settings
+static ssize_t write_auto_settings(struct bt_conn *conn,
+                                    const struct bt_gatt_attr *attr,
+                                    const void *buf, uint16_t len,
+                                    uint16_t offset, uint8_t flags) {
+    if (offset + len > 6) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+
+    const uint8_t *data = (const uint8_t *)buf;
+    
+    // Validate percentages
+    if (data[2] > 100 || data[3] > 100 || data[4] > 100) {
+        LOG_ERR("Invalid percentage values");
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    if (data[2] >= data[3]) {
+        LOG_ERR("auto_on must be < auto_off");
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    // Update settings
+    auto_settings.auto_on_enabled = (data[0] != 0);
+    auto_settings.auto_off_enabled = (data[1] != 0);
+    auto_settings.auto_on_percent = data[2];
+    auto_settings.auto_off_percent = data[3];
+    auto_settings.storage_percent = data[4];
+    
+    LOG_WRN("⚙️  Auto settings updated:");
+    LOG_WRN("   Auto ON: %s at <%d%%", 
+            auto_settings.auto_on_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.auto_on_percent);
+    LOG_WRN("   Auto OFF: %s at >%d%%", 
+            auto_settings.auto_off_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.auto_off_percent);
+    LOG_WRN("   Storage: %d%%", auto_settings.storage_percent);
+    
+    // Save to NVS
+    int rc = save_settings();
+    if (rc) {
+        LOG_ERR("Failed to save settings: %d", rc);
+        return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+    }
+    
+    // Notify clients
+    uint8_t notify_data[6];
+    notify_data[0] = auto_settings.auto_on_enabled ? 0x01 : 0x00;
+    notify_data[1] = auto_settings.auto_off_enabled ? 0x01 : 0x00;
+    notify_data[2] = auto_settings.auto_on_percent;
+    notify_data[3] = auto_settings.auto_off_percent;
+    notify_data[4] = auto_settings.storage_percent;
+    notify_data[5] = 0x00;
+    bt_gatt_notify(NULL, attr, notify_data, sizeof(notify_data));
+    
+    // Immediately check if we need to change power state
+    check_auto_mosfet(last_battery_percent);
+    
+    return len;
+}
+
+// ============================================================================
+// BLE GATT Service
+// ============================================================================
 
 BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
     BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
@@ -653,6 +898,13 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
                           read_temp_external, NULL, NULL),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
     
+    // ⭐ NEW: Auto MOSFET Settings
+    BT_GATT_CHARACTERISTIC(BT_UUID_AUTO_SETTINGS,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                          read_auto_settings, write_auto_settings, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    
     // Bootloader control
     BT_GATT_CHARACTERISTIC(BT_UUID_BOOTLOADER,
                           BT_GATT_CHRC_WRITE,
@@ -668,7 +920,20 @@ static int battery_monitor_init(const struct device *dev) {
     ARG_UNUSED(dev);
     int ret;
     
-    LOG_INF("Initializing Battery Monitor with NTC...");
+    LOG_INF("Initializing Battery Monitor with Auto MOSFET...");
+    
+    // Initialize settings subsystem
+    ret = settings_subsys_init();
+    if (ret) {
+        LOG_ERR("Failed to init settings: %d", ret);
+        return ret;
+    }
+    
+    // Load settings from NVS
+    ret = settings_load();
+    if (ret) {
+        LOG_WRN("Failed to load settings: %d (using defaults)", ret);
+    }
     
     // GPIO
     gpio_dev = DEVICE_DT_GET(DT_NODELABEL(gpio0));
@@ -718,14 +983,23 @@ static int battery_monitor_init(const struct device *dev) {
     k_work_init_delayable(&update_work, update_work_handler);
     k_work_init_delayable(&bootloader_work, bootloader_work_handler);
     
-    LOG_INF("Battery Monitor initialized");
-    LOG_INF("  - MOSFET: P0.%d", MOSFET_PIN);
-    LOG_INF("  - Internal temp: enabled");
-    LOG_INF("  - External NTC: enabled (P0.28/A4)");
-    LOG_INF("  - NTC config: 10K@25C, B=%d", NTC_B_COEFFICIENT);
-    LOG_INF("  - Voltage sensor: %s", battery_dev ? "enabled" : "disabled");
-    LOG_INF("  - Storage threshold: %d%%", STORAGE_THRESHOLD);
-    LOG_INF("  - Bootloader control: enabled");
+    LOG_INF("✅ Battery Monitor initialized");
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    LOG_INF("  MOSFET: P0.%d", MOSFET_PIN);
+    LOG_INF("  Internal temp: enabled");
+    LOG_INF("  External NTC: enabled (P0.28/A4)");
+    LOG_INF("  NTC config: 10K@25C, B=%d", NTC_B_COEFFICIENT);
+    LOG_INF("  Voltage sensor: %s", battery_dev ? "enabled" : "disabled");
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    LOG_INF("⚙️  AUTO MOSFET SETTINGS:");
+    LOG_INF("  Auto ON: %s at Battery < %d%%", 
+            auto_settings.auto_on_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.auto_on_percent);
+    LOG_INF("  Auto OFF: %s at Battery > %d%%", 
+            auto_settings.auto_off_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.auto_off_percent);
+    LOG_INF("  Storage: %d%%", auto_settings.storage_percent);
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     return 0;
 }
@@ -734,76 +1008,170 @@ SYS_INIT(battery_monitor_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 /*
  * ============================================================================
- * BLE Service Summary
+ * AUTO MOSFET FEATURE DOCUMENTATION
  * ============================================================================
  * 
- * Service UUID: 12345678-1234-5678-1234-56789abcdef0
+ * FEATURE OVERVIEW:
+ * ----------------
+ * Automatically controls MOSFET based on battery percentage with INDEPENDENT
+ * enable/disable for AUTO ON and AUTO OFF:
  * 
- * Characteristics:
- * 1. Power Control (12345678-1234-5678-1234-56789abcdef1)
- *    - Read/Write/Notify
- *    - Commands: 0x00=OFF, 0x01=ON, 0x02=TOGGLE
+ * 1. AUTO ON (can be enabled/disabled independently)
+ *    - When battery < auto_on_percent (default 30%)
+ *    - MOSFET turns ON to charge battery
  * 
- * 2. Internal Temperature (12345678-1234-5678-1234-56789abcdef2)
- *    - Read/Notify - nRF52840 die temperature
- *    - Format: int16_t in 0.01°C (2550 = 25.50°C)
+ * 2. AUTO OFF (can be enabled/disabled independently)
+ *    - When battery > auto_off_percent (default 80%)
+ *    - MOSFET turns OFF to stop charging
  * 
- * 3. Voltage (12345678-1234-5678-1234-56789abcdef3)
- *    - Read/Notify - Battery voltage
- *    - Format: uint16_t in mV (3700 = 3.7V)
+ * 3. All settings saved to NVS (survive reboot)
  * 
- * 4. Bootloader Control (12345678-1234-5678-1234-56789abcdef4)
- *    - Write only
- *    - Commands: 0x42=Bootloader, 0x52=Reset
+ * INDEPENDENT CONTROL EXAMPLES:
+ * ----------------------------
+ * - Enable ONLY Auto ON: Manually turn off when desired
+ * - Enable ONLY Auto OFF: Manually turn on when needed
+ * - Enable BOTH: Full automatic control
+ * - Disable BOTH: Manual control only
  * 
- * 5. External Temperature (12345678-1234-5678-1234-56789abcdef5) ⭐ NEW
- *    - Read/Notify - NTC thermistor temperature
- *    - Format: int16_t in 0.01°C (2550 = 25.50°C)
  * 
- * ============================================================================
- * Hardware Connections
- * ============================================================================
+ * BLE CHARACTERISTIC:
+ * ------------------
+ * UUID: 12345678-1234-5678-1234-56789abcdef6
  * 
- * NTC Thermistor Connection:
+ * Format (6 bytes):
+ *   [0] auto_on_enabled  (0x00=disabled, 0x01=enabled)
+ *   [1] auto_off_enabled (0x00=disabled, 0x01=enabled)
+ *   [2] auto_on_percent  (percentage 0-100)
+ *   [3] auto_off_percent (percentage 0-100)
+ *   [4] storage_percent  (percentage 0-100)
+ *   [5] reserved         (0x00)
  * 
- *     VCC (3.3V)
- *         │
- *         ├─── 10kΩ resistor
- *         │
- *         ├─────────── P0.28 (A4/AIN4) ← ADC reads here
- *         │
- *         ├─── NTC thermistor (10K@25°C)
- *         │
- *        GND
+ * Constraints:
+ *   - auto_on_percent must be < auto_off_percent
+ *   - All percentages: 0-100
  * 
- * This is a voltage divider circuit:
- * - Series resistor: 10K ohm (connect VCC to P0.28)
- * - NTC thermistor: 10K @ 25°C (connect P0.28 to GND)
- * - ADC measures voltage at the midpoint
  * 
- * Temperature Calculation:
- * 1. ADC reads voltage (0-3.3V)
- * 2. Calculate NTC resistance from voltage divider
- * 3. Use Steinhart-Hart equation with B coefficient
- * 4. Convert to Celsius
- * 
- * Supported NTC Types:
- * - 10K NTC thermistor (most common)
- * - B coefficient: 3950 (typical for 10K NTC)
- * - Can adjust B_COEFFICIENT constant for different thermistors
- * 
- * Example Python BLE client:
+ * PYTHON BLE CLIENT EXAMPLE:
+ * --------------------------
  * ```python
  * import asyncio
  * from bleak import BleakClient
  * 
- * TEMP_EXT_UUID = "12345678-1234-5678-1234-56789abcdef5"
+ * AUTO_SETTINGS_UUID = "12345678-1234-5678-1234-56789abcdef6"
  * 
- * async def read_external_temp(address):
+ * async def read_auto_settings(address):
  *     async with BleakClient(address) as client:
- *         data = await client.read_gatt_char(TEMP_EXT_UUID)
- *         temp_raw = int.from_bytes(data, 'little', signed=True)
- *         temp_c = temp_raw / 100.0
- *         print(f"External temperature: {temp_c:.2f}°C")
+ *         data = await client.read_gatt_char(AUTO_SETTINGS_UUID)
+ *         print(f"Auto ON: {'ENABLED' if data[0] else 'DISABLED'}")
+ *         print(f"Auto OFF: {'ENABLED' if data[1] else 'DISABLED'}")
+ *         print(f"Auto ON threshold: <{data[2]}%")
+ *         print(f"Auto OFF threshold: >{data[3]}%")
+ *         print(f"Storage: {data[4]}%")
+ * 
+ * async def write_auto_settings(address, auto_on_en, auto_off_en, 
+ *                               auto_on, auto_off, storage):
+ *     async with BleakClient(address) as client:
+ *         data = bytes([
+ *             1 if auto_on_en else 0,
+ *             1 if auto_off_en else 0,
+ *             auto_on,
+ *             auto_off,
+ *             storage,
+ *             0  # reserved
+ *         ])
+ *         await client.write_gatt_char(AUTO_SETTINGS_UUID, data)
+ *         print("Settings updated!")
+ * 
+ * # Usage examples:
+ * 
+ * # Example 1: Enable BOTH auto ON and auto OFF
+ * asyncio.run(write_auto_settings("XX:XX:XX:XX:XX:XX", 
+ *     auto_on_en=True,   # Enable auto ON
+ *     auto_off_en=True,  # Enable auto OFF
+ *     auto_on=25,        # Turn on at <25%
+ *     auto_off=85,       # Turn off at >85%
+ *     storage=40))
+ * 
+ * # Example 2: Enable ONLY auto ON (auto OFF disabled)
+ * asyncio.run(write_auto_settings("XX:XX:XX:XX:XX:XX", 
+ *     auto_on_en=True,   # Enable auto ON
+ *     auto_off_en=False, # Disable auto OFF - manual control
+ *     auto_on=30,        # Turn on at <30%
+ *     auto_off=80,       # Ignored (disabled)
+ *     storage=40))
+ * 
+ * # Example 3: Enable ONLY auto OFF (auto ON disabled)
+ * asyncio.run(write_auto_settings("XX:XX:XX:XX:XX:XX", 
+ *     auto_on_en=False,  # Disable auto ON - manual control
+ *     auto_off_en=True,  # Enable auto OFF
+ *     auto_on=30,        # Ignored (disabled)
+ *     auto_off=80,       # Turn off at >80%
+ *     storage=40))
+ * 
+ * # Example 4: Disable BOTH (manual control only)
+ * asyncio.run(write_auto_settings("XX:XX:XX:XX:XX:XX", 
+ *     auto_on_en=False,  # Disable auto ON
+ *     auto_off_en=False, # Disable auto OFF
+ *     auto_on=30,        # Ignored
+ *     auto_off=80,       # Ignored
+ *     storage=40))       # Storage still active
  * ```
+ * 
+ * 
+ * USE CASES:
+ * ----------
+ * 1. Full Auto (both enabled):
+ *    - Solar charging system
+ *    - Maintain battery 30-80% automatically
+ * 
+ * 2. Auto ON only:
+ *    - Emergency backup power
+ *    - Charges when battery critical
+ *    - User decides when to stop
+ * 
+ * 3. Auto OFF only:
+ *    - Prevent overcharging
+ *    - User starts charging manually
+ *    - Auto stops at safe level
+ * 
+ * 4. Manual only (both disabled):
+ *    - Full user control
+ *    - Testing or special scenarios
+ * 
+ * 
+ * LOGIC FLOW EXAMPLES:
+ * -------------------
+ * 
+ * BOTH ENABLED:
+ * Battery = 25% → Auto ON → MOSFET ON → Charging
+ * Battery = 50% → No change → Continue charging
+ * Battery = 85% → Auto OFF → MOSFET OFF → Stop charging
+ * Battery = 20% → Auto ON → MOSFET ON → Start charging again
+ * 
+ * ONLY AUTO ON ENABLED:
+ * Battery = 25% → Auto ON → MOSFET ON → Charging
+ * Battery = 85% → No auto action (stays ON)
+ * User manually turns OFF when desired
+ * 
+ * ONLY AUTO OFF ENABLED:
+ * User manually turns ON MOSFET
+ * Battery = 50% → No change → Continue charging
+ * Battery = 85% → Auto OFF → MOSFET OFF → Stop charging
+ * 
+ * 
+ * NVS STORAGE:
+ * ------------
+ * Settings stored in flash memory under "battery_monitor" namespace:
+ * - battery_monitor/auto_on_en   (bool)
+ * - battery_monitor/auto_off_en  (bool)
+ * - battery_monitor/auto_on      (uint8_t)
+ * - battery_monitor/auto_off     (uint8_t)
+ * - battery_monitor/storage      (uint8_t)
+ * 
+ * Settings persist across:
+ * - Device reboots
+ * - Power cycles
+ * - Firmware updates (if NVS partition preserved)
+ * 
+ * ============================================================================
  */
