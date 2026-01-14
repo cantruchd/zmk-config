@@ -1,6 +1,6 @@
 /*
  * battery_monitor.c
- * Custom battery monitoring, MOSFET control, and temperature reporting
+ * Custom battery monitoring, MOSFET control, and dual temperature reporting
  * 
  * Location: config/boards/shields/battery_monitor/battery_monitor.c
  * 
@@ -8,11 +8,12 @@
  * - MOSFET control for battery power (on/off/toggle)
  * - Automatic storage mode at 40%
  * - Low battery warnings
- * - Temperature monitoring and BLE reporting
+ * - Dual temperature monitoring:
+ *   * Internal: nRF52840 die temperature
+ *   * External: NTC thermistor (10K) via ADC
  * - Voltage monitoring and BLE reporting
  * - Smart power saving: Auto-updates 30min after first read, then stops
- * - Bootloader control via BLE (enter flash/DFU mode remotely) ⭐ NEW
- * - Bond clearing via ZMK keymap
+ * - Bootloader control via BLE (enter flash/DFU mode remotely)
  */
 
 #include <zephyr/device.h>
@@ -20,18 +21,20 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/adc.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/sys/reboot.h>
 #include <stdlib.h>
+#include <math.h>
 
 #include <zmk/battery.h>
 #include <zmk/ble.h>
 #include <zmk/events/battery_state_changed.h>
-
-// ⭐ ADD THIS LINE
+#include <zmk/events/position_state_changed.h>
+#include <zmk/event_manager.h>
 #include <hal/nrf_power.h>
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
@@ -41,64 +44,82 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // ============================================================================
 
 // GPIO pins
-#define MOSFET_PIN  24  // P0.24 = D5 on nice!nano (right side)
+#define MOSFET_PIN  24  // P0.24 = D5 on nice!nano
+
+// NTC Thermistor Configuration
+#define NTC_ADC_PIN           4    // AIN4 = P0.28 = A4 on nice!nano
+#define NTC_REFERENCE_MV      3300 // 3.3V reference
+#define NTC_SERIES_RESISTOR   10000 // 10K ohm series resistor
+#define NTC_NOMINAL_RESISTANCE 10000 // 10K thermistor at 25°C
+#define NTC_NOMINAL_TEMP      25.0  // 25°C
+#define NTC_B_COEFFICIENT     3950  // B value for 10K NTC
 
 // Battery thresholds (percentage)
-#define STORAGE_THRESHOLD   40  // Auto-off at 40%
-#define LOW_WARNING         35  // Warning at 35%
-#define CRITICAL_LOW        20  // Critical at 20%
+#define STORAGE_THRESHOLD   40
+#define LOW_WARNING         35
+#define CRITICAL_LOW        20
 
 // Update intervals
-#define UPDATE_INTERVAL_MS      10000   // 10 seconds between updates
-#define AUTO_UPDATE_DURATION_MS 1800000 // 30 minutes (30 * 60 * 1000)
+#define UPDATE_INTERVAL_MS      10000
+#define AUTO_UPDATE_DURATION_MS 1800000
 
 // ============================================================================
-// BLE Service and Characteristic UUIDs
+// BLE UUIDs
 // ============================================================================
 
-// Custom service UUID for battery control and temperature
 #define BT_UUID_CUSTOM_SERVICE_VAL \
     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef0)
-
 #define BT_UUID_CUSTOM_SERVICE \
     BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERVICE_VAL)
 
-// Battery power control characteristic UUID
 #define BT_UUID_POWER_CONTROL_VAL \
     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef1)
-
 #define BT_UUID_POWER_CONTROL \
     BT_UUID_DECLARE_128(BT_UUID_POWER_CONTROL_VAL)
 
-// Temperature characteristic UUID
-#define BT_UUID_CUSTOM_TEMP_VAL \
+#define BT_UUID_TEMP_INTERNAL_VAL \
     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef2)
+#define BT_UUID_TEMP_INTERNAL \
+    BT_UUID_DECLARE_128(BT_UUID_TEMP_INTERNAL_VAL)
 
-#define BT_UUID_CUSTOM_TEMP \
-    BT_UUID_DECLARE_128(BT_UUID_CUSTOM_TEMP_VAL)
-
-// Voltage characteristic UUID
 #define BT_UUID_VOLTAGE_VAL \
     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef3)
-
 #define BT_UUID_VOLTAGE \
     BT_UUID_DECLARE_128(BT_UUID_VOLTAGE_VAL)
 
-// ⭐ NEW: Bootloader control characteristic UUID
 #define BT_UUID_BOOTLOADER_VAL \
     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef4)
-
 #define BT_UUID_BOOTLOADER \
     BT_UUID_DECLARE_128(BT_UUID_BOOTLOADER_VAL)
 
-// Commands for power control
+// ⭐ NEW: External NTC temperature UUID
+#define BT_UUID_TEMP_EXTERNAL_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef5)
+#define BT_UUID_TEMP_EXTERNAL \
+    BT_UUID_DECLARE_128(BT_UUID_TEMP_EXTERNAL_VAL)
+
+// Commands
 #define CMD_POWER_OFF    0x00
 #define CMD_POWER_ON     0x01
 #define CMD_POWER_TOGGLE 0x02
+#define CMD_ENTER_BOOTLOADER 0x42
+#define CMD_RESET_DEVICE     0x52
 
-// ⭐ NEW: Bootloader commands
-#define CMD_ENTER_BOOTLOADER 0x42  // Magic value: 'B' for Bootloader
-#define CMD_RESET_DEVICE     0x52  // Magic value: 'R' for Reset
+// ============================================================================
+// ADC Configuration for NTC
+// ============================================================================
+
+#if !DT_NODE_EXISTS(DT_PATH(zephyr_user)) || \
+    !DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels)
+#error "No suitable devicetree overlay specified"
+#endif
+
+#define DT_SPEC_AND_COMMA(node_id, prop, idx) \
+    ADC_DT_SPEC_GET_BY_IDX(node_id, idx),
+
+static const struct adc_dt_spec adc_channels[] = {
+    DT_FOREACH_PROP_ELEM(DT_PATH(zephyr_user), io_channels, DT_SPEC_AND_COMMA)
+};
 
 // ============================================================================
 // Global Variables
@@ -109,24 +130,21 @@ static const struct device *temp_dev;
 static const struct device *battery_dev;
 static bool power_state = false;
 static uint8_t last_battery_percent = 100;
-static int16_t current_temperature = 0;  // Temperature in 0.01°C
-static uint16_t current_voltage_mv = 0;  // Voltage in millivolts
 
-// Auto-update state management
+static int16_t temp_internal = 0;      // Internal temp in 0.01°C
+static int16_t temp_external = 0;      // External NTC temp in 0.01°C
+static uint16_t current_voltage_mv = 0;
+
 static bool auto_update_active = false;
 static int64_t auto_update_start_time = 0;
 static struct k_work_delayable update_work;
-
-// Channel discovery
-static enum sensor_channel discovered_channel = SENSOR_CHAN_PRIV_START;
-
-// ⭐ NEW: Bootloader control work
 static struct k_work_delayable bootloader_work;
 
-// Forward declaration of GATT service
+static enum sensor_channel discovered_channel = SENSOR_CHAN_PRIV_START;
+
 extern const struct bt_gatt_service_static battery_monitor_svc;
 
-// Forward declarations for GATT service
+// Forward declarations
 static ssize_t read_power_control(struct bt_conn *conn,
                                    const struct bt_gatt_attr *attr,
                                    void *buf, uint16_t len, uint16_t offset);
@@ -134,9 +152,12 @@ static ssize_t write_power_control(struct bt_conn *conn,
                                     const struct bt_gatt_attr *attr,
                                     const void *buf, uint16_t len,
                                     uint16_t offset, uint8_t flags);
-static ssize_t read_temperature(struct bt_conn *conn,
-                                 const struct bt_gatt_attr *attr,
-                                 void *buf, uint16_t len, uint16_t offset);
+static ssize_t read_temp_internal(struct bt_conn *conn,
+                                   const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset);
+static ssize_t read_temp_external(struct bt_conn *conn,
+                                   const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset);
 static ssize_t read_voltage(struct bt_conn *conn,
                              const struct bt_gatt_attr *attr,
                              void *buf, uint16_t len, uint16_t offset);
@@ -146,13 +167,9 @@ static ssize_t write_bootloader(struct bt_conn *conn,
                                  uint16_t offset, uint8_t flags);
 
 // ============================================================================
-// ⭐ NEW: Bootloader Control Functions
+// Bootloader Control
 // ============================================================================
-#include <zmk/events/position_state_changed.h>  // ⭐ ADD
-#include <zmk/event_manager.h>                   // ⭐ ADD
-/**
- * Enter bootloader via keymap event
- */
+
 static void enter_bootloader_mode(void) {
     LOG_WRN("========================================");
     LOG_WRN("ENTERING BOOTLOADER VIA KEYMAP");
@@ -160,7 +177,6 @@ static void enter_bootloader_mode(void) {
     
     k_sleep(K_MSEC(100));
     
-    // Press position 0
     raise_zmk_position_state_changed(
         (struct zmk_position_state_changed){
             .position = 0,
@@ -171,7 +187,6 @@ static void enter_bootloader_mode(void) {
     
     k_sleep(K_MSEC(10));
     
-    // Release position 0
     raise_zmk_position_state_changed(
         (struct zmk_position_state_changed){
             .position = 0,
@@ -180,23 +195,15 @@ static void enter_bootloader_mode(void) {
         }
     );
 }
-/**
- * Reset device (normal reboot, not bootloader)
- */
+
 static void reset_device(void) {
     LOG_WRN("========================================");
     LOG_WRN("RESETTING DEVICE");
-    LOG_WRN("Normal reboot in 1 second...");
     LOG_WRN("========================================");
-    
     k_sleep(K_MSEC(100));
     sys_reboot(SYS_REBOOT_COLD);
 }
 
-/**
- * Delayed bootloader entry (with countdown)
- * This gives BLE time to send response before reboot
- */
 static void bootloader_work_handler(struct k_work *work) {
     enter_bootloader_mode();
 }
@@ -205,50 +212,111 @@ static void bootloader_work_handler(struct k_work *work) {
 // Auto-Update Management
 // ============================================================================
 
-/**
- * Start or restart the 30-minute auto-update timer
- */
 static void start_auto_updates(void) {
     if (!auto_update_active) {
         auto_update_active = true;
         auto_update_start_time = k_uptime_get();
-        LOG_INF("Auto-updates STARTED - will run for 30 minutes");
+        LOG_INF("Auto-updates STARTED - 30 min duration");
     } else {
-        // Reset timer if already active
         auto_update_start_time = k_uptime_get();
         LOG_DBG("Auto-update timer RESET");
     }
 }
 
-/**
- * Check if auto-updates should still be active
- * @return true if within 30-minute window, false otherwise
- */
 static bool should_auto_update(void) {
-    if (!auto_update_active) {
-        return false;
-    }
+    if (!auto_update_active) return false;
     
     int64_t elapsed_ms = k_uptime_get() - auto_update_start_time;
     
     if (elapsed_ms >= AUTO_UPDATE_DURATION_MS) {
         auto_update_active = false;
         LOG_INF("Auto-updates STOPPED - 30 minutes elapsed");
-        LOG_INF("Power saving mode: Updates disabled until next read");
         return false;
     }
-    
     return true;
+}
+
+// ============================================================================
+// NTC Thermistor Reading (External Temperature)
+// ============================================================================
+
+/**
+ * Read NTC thermistor via ADC and calculate temperature
+ * Uses Steinhart-Hart equation
+ * @return temperature in 0.01°C
+ */
+static int16_t read_ntc_temperature(void) {
+    int err;
+    uint16_t buf;
+    struct adc_sequence sequence = {
+        .buffer = &buf,
+        .buffer_size = sizeof(buf),
+    };
+    
+    // Use first ADC channel (NTC thermistor)
+    if (ARRAY_SIZE(adc_channels) == 0) {
+        LOG_ERR("No ADC channels configured");
+        return 0;
+    }
+    
+    const struct adc_dt_spec *channel = &adc_channels[0];
+    
+    err = adc_sequence_init_dt(channel, &sequence);
+    if (err < 0) {
+        LOG_ERR("Failed to init ADC sequence: %d", err);
+        return 0;
+    }
+    
+    err = adc_read(channel->dev, &sequence);
+    if (err < 0) {
+        LOG_ERR("Failed to read ADC: %d", err);
+        return 0;
+    }
+    
+    // Convert ADC reading to millivolts
+    int32_t val_mv = buf;
+    err = adc_raw_to_millivolts_dt(channel, &val_mv);
+    if (err < 0) {
+        LOG_ERR("Failed to convert to mV: %d", err);
+        return 0;
+    }
+    
+    // Calculate NTC resistance using voltage divider
+    // V_out = V_in * (R_ntc / (R_series + R_ntc))
+    // R_ntc = R_series * V_out / (V_in - V_out)
+    
+    if (val_mv >= NTC_REFERENCE_MV) {
+        LOG_WRN("NTC voltage at max - thermistor may be disconnected");
+        return 0;
+    }
+    
+    float voltage = (float)val_mv / 1000.0f;
+    float v_ref = (float)NTC_REFERENCE_MV / 1000.0f;
+    
+    float ntc_resistance = NTC_SERIES_RESISTOR * voltage / (v_ref - voltage);
+    
+    // Steinhart-Hart simplified (B parameter equation)
+    // 1/T = 1/T0 + (1/B) * ln(R/R0)
+    // T in Kelvin
+    
+    float ln_ratio = logf(ntc_resistance / NTC_NOMINAL_RESISTANCE);
+    float temp_kelvin = 1.0f / ((1.0f / (NTC_NOMINAL_TEMP + 273.15f)) + 
+                                (ln_ratio / NTC_B_COEFFICIENT));
+    float temp_celsius = temp_kelvin - 273.15f;
+    
+    // Convert to 0.01°C
+    int16_t temp_hundredths = (int16_t)(temp_celsius * 100.0f);
+    
+    LOG_DBG("NTC: %d mV, %.1f kΩ, %.2f°C", 
+            val_mv, ntc_resistance/1000.0f, temp_celsius);
+    
+    return temp_hundredths;
 }
 
 // ============================================================================
 // Battery Voltage Reading
 // ============================================================================
 
-/**
- * Read battery voltage from ZMK battery sensor
- * Uses channel discovery
- */
 static void read_battery_voltage(void) {
     const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
     
@@ -257,7 +325,6 @@ static void read_battery_voltage(void) {
         return;
     }
 
-    // 1. Fetch sample from sensor
     int rc = sensor_sample_fetch(battery);
     if (rc != 0) {
         LOG_WRN("Failed to fetch battery: %d", rc);
@@ -266,12 +333,9 @@ static void read_battery_voltage(void) {
 
     struct sensor_value voltage;
 
-    // 2. If we already know the correct channel, use it directly
     if (discovered_channel != SENSOR_CHAN_PRIV_START) {
         rc = sensor_channel_get(battery, discovered_channel, &voltage);
-    } 
-    // 3. Otherwise, discover the correct channel (first run)
-    else {
+    } else {
         static const enum sensor_channel candidates[] = {
             SENSOR_CHAN_VOLTAGE,
             SENSOR_CHAN_ALL,
@@ -282,117 +346,102 @@ static void read_battery_voltage(void) {
             rc = sensor_channel_get(battery, candidates[i], &voltage);
             if (rc == 0) {
                 discovered_channel = candidates[i];
-                LOG_INF("Voltage channel discovered: index %d", i);
+                LOG_INF("Voltage channel discovered: %d", i);
                 break;
             }
         }
     }
 
-    // 4. Process the result
     if (rc == 0) {
-        // Calculate mV: val1 (Volts), val2 (Microvolts)
         current_voltage_mv = (voltage.val1 * 1000) + (voltage.val2 / 1000);
-        LOG_INF("Voltage: %d mV", current_voltage_mv);
+        LOG_INF("Battery: %d mV", current_voltage_mv);
     } else {
-        LOG_ERR("No valid voltage channel found");
+        LOG_ERR("No valid voltage channel");
         current_voltage_mv = 0;
     }
 }
 
 // ============================================================================
-// Temperature Sensor Functions
+// Internal Temperature Sensor
 // ============================================================================
 
-/**
- * Read temperature from nRF52840 internal sensor
- * @return temperature in 0.01°C (e.g., 2550 = 25.50°C)
- */
-static int16_t read_temp_sensor(void) {
+static int16_t read_internal_temp(void) {
     struct sensor_value temp_value;
     int ret;
     
     if (temp_dev == NULL) {
-        LOG_ERR("Temperature device not ready");
+        LOG_ERR("Internal temp device not ready");
         return 0;
     }
     
     ret = sensor_sample_fetch(temp_dev);
     if (ret < 0) {
-        LOG_ERR("Failed to fetch temperature: %d", ret);
+        LOG_ERR("Failed to fetch internal temp: %d", ret);
         return 0;
     }
     
     ret = sensor_channel_get(temp_dev, SENSOR_CHAN_DIE_TEMP, &temp_value);
     if (ret < 0) {
-        LOG_ERR("Failed to get temperature: %d", ret);
+        LOG_ERR("Failed to get internal temp: %d", ret);
         return 0;
     }
     
-    // Convert to 0.01°C
     int16_t temp_celsius = temp_value.val1 * 100;
     temp_celsius += temp_value.val2 / 10000;
     
     return temp_celsius;
 }
 
-/**
- * Update all sensor values and notify BLE clients
- */
+// ============================================================================
+// Update All Sensors
+// ============================================================================
+
 static void update_all_sensors(void) {
-    // Read temperature
-    current_temperature = read_temp_sensor();
-    float temp_float = current_temperature / 100.0f;
-    LOG_INF("Temperature: %.2f°C", temp_float);
+    // Read internal temperature
+    temp_internal = read_internal_temp();
+    LOG_INF("Internal temp: %.2f°C", temp_internal / 100.0f);
+    
+    // Read external NTC temperature
+    temp_external = read_ntc_temperature();
+    LOG_INF("External temp: %.2f°C", temp_external / 100.0f);
     
     // Read voltage
     read_battery_voltage();
     
-    // Notify BLE clients about temperature change
+    // Notify BLE clients
     bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], 
-                   &current_temperature, sizeof(current_temperature));
-    
-    // Notify BLE clients about voltage change
+                   &temp_internal, sizeof(temp_internal));
     bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], 
                    &current_voltage_mv, sizeof(current_voltage_mv));
+    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[11], 
+                   &temp_external, sizeof(temp_external));
 }
 
-/**
- * Periodic update work handler
- * Only runs when auto-updates are active (within 30min window)
- */
 static void update_work_handler(struct k_work *work) {
-    if (!should_auto_update()) {
-        // 30 minutes elapsed, stop updates
-        return;
-    }
+    if (!should_auto_update()) return;
     
-    // Update all sensors
     update_all_sensors();
     
-    // Calculate remaining time
-    int64_t elapsed_ms = k_uptime_get() - auto_update_start_time;
-    int64_t remaining_ms = AUTO_UPDATE_DURATION_MS - elapsed_ms;
-    int remaining_min = remaining_ms / 60000;
+    int64_t elapsed = k_uptime_get() - auto_update_start_time;
+    int remaining_min = (AUTO_UPDATE_DURATION_MS - elapsed) / 60000;
+    LOG_DBG("Auto-update (%d min left)", remaining_min);
     
-    LOG_DBG("Auto-update running (%d min remaining)", remaining_min);
-    
-    // Schedule next update
     k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
 }
 
 // ============================================================================
-// MOSFET Control Functions
+// MOSFET Control
 // ============================================================================
 
 static void set_power_state(bool on) {
     if (gpio_dev == NULL) {
-        LOG_ERR("GPIO device not ready");
+        LOG_ERR("GPIO not ready");
         return;
     }
     
     int ret = gpio_pin_set(gpio_dev, MOSFET_PIN, on ? 1 : 0);
     if (ret < 0) {
-        LOG_ERR("Failed to set MOSFET pin: %d", ret);
+        LOG_ERR("Failed to set MOSFET: %d", ret);
         return;
     }
     
@@ -404,17 +453,14 @@ static void set_power_state(bool on) {
 }
 
 void battery_monitor_power_on(void) {
-    LOG_INF("Manual power ON command");
     set_power_state(true);
 }
 
 void battery_monitor_power_off(void) {
-    LOG_INF("Manual power OFF command");
     set_power_state(false);
 }
 
 void battery_monitor_power_toggle(void) {
-    LOG_INF("Toggle power command");
     set_power_state(!power_state);
 }
 
@@ -428,43 +474,32 @@ bool battery_monitor_get_power_state(void) {
 
 static int battery_level_listener(const zmk_event_t *eh) {
     struct zmk_battery_state_changed *ev = as_zmk_battery_state_changed(eh);
+    if (ev == NULL) return 0;
     
-    if (ev == NULL) {
-        return 0;
-    }
+    uint8_t percent = ev->state_of_charge;
+    LOG_INF("Battery: %d%%", percent);
     
-    uint8_t battery_percent = ev->state_of_charge;
-    
-    LOG_INF("Battery: %d%%", battery_percent);
-    
-    // Storage mode logic
-    if (battery_percent <= STORAGE_THRESHOLD && power_state) {
-        LOG_WRN("Battery at storage level (%d%%), entering storage mode", 
-                battery_percent);
+    if (percent <= STORAGE_THRESHOLD && power_state) {
+        LOG_WRN("Storage mode at %d%%", percent);
         set_power_state(false);
     }
     
-    // Low battery warning
-    if (battery_percent <= LOW_WARNING && battery_percent > CRITICAL_LOW) {
+    if (percent <= LOW_WARNING && percent > CRITICAL_LOW) {
         if (last_battery_percent > LOW_WARNING) {
-            LOG_WRN("Battery low: %d%%", battery_percent);
+            LOG_WRN("Battery low: %d%%", percent);
         }
     }
     
-    // Critical battery warning
-    if (battery_percent <= CRITICAL_LOW) {
+    if (percent <= CRITICAL_LOW) {
         if (last_battery_percent > CRITICAL_LOW) {
-            LOG_ERR("Battery critical: %d%% - Please charge soon!", 
-                    battery_percent);
+            LOG_ERR("Battery critical: %d%%", percent);
         }
         if (power_state) {
-            LOG_ERR("Forcing power OFF due to critical battery");
             set_power_state(false);
         }
     }
     
-    last_battery_percent = battery_percent;
-    
+    last_battery_percent = percent;
     return 0;
 }
 
@@ -472,17 +507,14 @@ ZMK_LISTENER(battery_monitor, battery_level_listener);
 ZMK_SUBSCRIPTION(battery_monitor, zmk_battery_state_changed);
 
 // ============================================================================
-// BLE GATT Service Implementation
+// BLE GATT Service
 // ============================================================================
 
 static ssize_t read_power_control(struct bt_conn *conn,
                                    const struct bt_gatt_attr *attr,
                                    void *buf, uint16_t len, uint16_t offset) {
     uint8_t status = power_state ? 0x01 : 0x00;
-    
-    // Trigger auto-updates on any characteristic read
     start_auto_updates();
-    
     return bt_gatt_attr_read(conn, attr, buf, len, offset, &status, sizeof(status));
 }
 
@@ -494,58 +526,56 @@ static ssize_t write_power_control(struct bt_conn *conn,
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
     }
 
-    uint8_t command = *((uint8_t *)buf);
+    uint8_t cmd = *((uint8_t *)buf);
+    LOG_INF("Power command: 0x%02X", cmd);
     
-    LOG_INF("Received BLE command: 0x%02X", command);
-    
-    switch (command) {
-        case CMD_POWER_OFF:
-            battery_monitor_power_off();
-            break;
-            
-        case CMD_POWER_ON:
-            battery_monitor_power_on();
-            break;
-            
-        case CMD_POWER_TOGGLE:
-            battery_monitor_power_toggle();
-            break;
-            
+    switch (cmd) {
+        case CMD_POWER_OFF: battery_monitor_power_off(); break;
+        case CMD_POWER_ON: battery_monitor_power_on(); break;
+        case CMD_POWER_TOGGLE: battery_monitor_power_toggle(); break;
         default:
-            LOG_WRN("Unknown command: 0x%02X", command);
+            LOG_WRN("Unknown command: 0x%02X", cmd);
             return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
-    
     return len;
 }
 
-static ssize_t read_temperature(struct bt_conn *conn,
-                                 const struct bt_gatt_attr *attr,
-                                 void *buf, uint16_t len, uint16_t offset) {
-    LOG_INF("Temperature read by host - starting auto-updates");
+static ssize_t read_temp_internal(struct bt_conn *conn,
+                                   const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset) {
+    LOG_INF("Internal temp read - starting auto-updates");
+    temp_internal = read_internal_temp();
     
-    // Update immediately
-    current_temperature = read_temp_sensor();
-    
-    // Start auto-update timer
     start_auto_updates();
     if (!k_work_delayable_is_pending(&update_work)) {
         k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
     }
     
     return bt_gatt_attr_read(conn, attr, buf, len, offset, 
-                            &current_temperature, sizeof(current_temperature));
+                            &temp_internal, sizeof(temp_internal));
+}
+
+static ssize_t read_temp_external(struct bt_conn *conn,
+                                   const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset) {
+    LOG_INF("External temp read - starting auto-updates");
+    temp_external = read_ntc_temperature();
+    
+    start_auto_updates();
+    if (!k_work_delayable_is_pending(&update_work)) {
+        k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
+    }
+    
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, 
+                            &temp_external, sizeof(temp_external));
 }
 
 static ssize_t read_voltage(struct bt_conn *conn,
                              const struct bt_gatt_attr *attr,
                              void *buf, uint16_t len, uint16_t offset) {
-    LOG_INF("Voltage read by host - starting auto-updates");
-    
-    // Update immediately
+    LOG_INF("Voltage read - starting auto-updates");
     read_battery_voltage();
     
-    // Start auto-update timer
     start_auto_updates();
     if (!k_work_delayable_is_pending(&update_work)) {
         k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
@@ -555,9 +585,6 @@ static ssize_t read_voltage(struct bt_conn *conn,
                             &current_voltage_mv, sizeof(current_voltage_mv));
 }
 
-/**
- * ⭐ NEW: Bootloader control write handler
- */
 static ssize_t write_bootloader(struct bt_conn *conn,
                                  const struct bt_gatt_attr *attr,
                                  const void *buf, uint16_t len,
@@ -566,65 +593,57 @@ static ssize_t write_bootloader(struct bt_conn *conn,
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
     }
 
-    uint8_t command = *((uint8_t *)buf);
+    uint8_t cmd = *((uint8_t *)buf);
+    LOG_WRN("Bootloader command: 0x%02X", cmd);
     
-    LOG_WRN("Received bootloader command: 0x%02X", command);
-    
-    switch (command) {
+    switch (cmd) {
         case CMD_ENTER_BOOTLOADER:
-            LOG_WRN("⚠️  BOOTLOADER MODE REQUESTED");
-            LOG_WRN("Device will reboot to bootloader in 2 seconds...");
-            
-            // Schedule delayed bootloader entry
-            // This gives BLE stack time to send response
+            LOG_WRN("⚠️  BOOTLOADER in 2s");
             k_work_reschedule(&bootloader_work, K_MSEC(2000));
             break;
-            
         case CMD_RESET_DEVICE:
-            LOG_WRN("⚠️  DEVICE RESET REQUESTED");
-            LOG_WRN("Device will reboot in 2 seconds...");
-            
-            // Delay to allow BLE response
+            LOG_WRN("⚠️  RESET in 2s");
             k_sleep(K_MSEC(2000));
             reset_device();
             break;
-            
         default:
-            LOG_WRN("Unknown bootloader command: 0x%02X", command);
             return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
-    
     return len;
 }
 
-/**
- * GATT Service Definition (with bootloader control added)
- */
 BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
     BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
     
-    // Power control characteristic (read/write/notify)
+    // Power control
     BT_GATT_CHARACTERISTIC(BT_UUID_POWER_CONTROL,
                           BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,
                           BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
                           read_power_control, write_power_control, NULL),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
     
-    // Temperature characteristic (read/notify)
-    BT_GATT_CHARACTERISTIC(BT_UUID_CUSTOM_TEMP,
+    // Internal temperature
+    BT_GATT_CHARACTERISTIC(BT_UUID_TEMP_INTERNAL,
                           BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
                           BT_GATT_PERM_READ,
-                          read_temperature, NULL, NULL),
+                          read_temp_internal, NULL, NULL),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
     
-    // Voltage characteristic (read/notify)
+    // Voltage
     BT_GATT_CHARACTERISTIC(BT_UUID_VOLTAGE,
                           BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
                           BT_GATT_PERM_READ,
                           read_voltage, NULL, NULL),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
     
-    // ⭐ NEW: Bootloader control characteristic (write only)
+    // External NTC temperature
+    BT_GATT_CHARACTERISTIC(BT_UUID_TEMP_EXTERNAL,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ,
+                          read_temp_external, NULL, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    
+    // Bootloader control
     BT_GATT_CHARACTERISTIC(BT_UUID_BOOTLOADER,
                           BT_GATT_CHRC_WRITE,
                           BT_GATT_PERM_WRITE,
@@ -639,58 +658,64 @@ static int battery_monitor_init(const struct device *dev) {
     ARG_UNUSED(dev);
     int ret;
     
-    LOG_INF("Initializing Battery Monitor...");
+    LOG_INF("Initializing Battery Monitor with NTC...");
     
-    // Get GPIO device
+    // GPIO
     gpio_dev = DEVICE_DT_GET(DT_NODELABEL(gpio0));
     if (!device_is_ready(gpio_dev)) {
-        LOG_ERR("GPIO device not ready");
+        LOG_ERR("GPIO not ready");
         return -ENODEV;
     }
     
-    // Get temperature sensor device
+    // Internal temp sensor
     temp_dev = DEVICE_DT_GET(DT_NODELABEL(temp));
     if (!device_is_ready(temp_dev)) {
-        LOG_ERR("Temperature device not ready");
+        LOG_ERR("Internal temp not ready");
         return -ENODEV;
     }
     
-    // Get battery sensor device
+    // Battery sensor
     battery_dev = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
     if (!device_is_ready(battery_dev)) {
-        LOG_WRN("Battery voltage sensor not ready");
+        LOG_WRN("Battery sensor not ready");
         battery_dev = NULL;
-    } else {
-        LOG_INF("Battery voltage sensor ready");
     }
     
-    // Configure MOSFET pin
+    // Initialize ADC for NTC
+    for (int i = 0; i < ARRAY_SIZE(adc_channels); i++) {
+        if (!adc_is_ready_dt(&adc_channels[i])) {
+            LOG_ERR("ADC channel %d not ready", i);
+            return -ENODEV;
+        }
+        
+        ret = adc_channel_setup_dt(&adc_channels[i]);
+        if (ret < 0) {
+            LOG_ERR("Failed to setup ADC channel %d: %d", i, ret);
+            return ret;
+        }
+        LOG_INF("ADC channel %d ready (NTC thermistor)", i);
+    }
+    
+    // Configure MOSFET
     ret = gpio_pin_configure(gpio_dev, MOSFET_PIN, GPIO_OUTPUT_INACTIVE);
     if (ret < 0) {
-        LOG_ERR("Failed to configure MOSFET pin: %d", ret);
+        LOG_ERR("Failed to configure MOSFET: %d", ret);
         return ret;
     }
     
     set_power_state(false);
     
-    // Initialize update work (starts inactive)
     k_work_init_delayable(&update_work, update_work_handler);
-    
-    // ⭐ NEW: Initialize bootloader work
     k_work_init_delayable(&bootloader_work, bootloader_work_handler);
     
-    LOG_INF("Battery Monitor initialized successfully");
-    LOG_INF("  - MOSFET control: P0.%d", MOSFET_PIN);
-    LOG_INF("  - Storage threshold: %d%%", STORAGE_THRESHOLD);
-    LOG_INF("  - Low warning: %d%%", LOW_WARNING);
-    LOG_INF("  - Critical: %d%%", CRITICAL_LOW);
-    LOG_INF("  - Temperature sensor: enabled");
+    LOG_INF("Battery Monitor initialized");
+    LOG_INF("  - MOSFET: P0.%d", MOSFET_PIN);
+    LOG_INF("  - Internal temp: enabled");
+    LOG_INF("  - External NTC: enabled (P0.28/A4)");
+    LOG_INF("  - NTC config: 10K@25C, B=%d", NTC_B_COEFFICIENT);
     LOG_INF("  - Voltage sensor: %s", battery_dev ? "enabled" : "disabled");
-    LOG_INF("  - Power saving: Auto-updates disabled (activate by reading)");
-    LOG_INF("  - Update interval: %d seconds", UPDATE_INTERVAL_MS / 1000);
-    LOG_INF("  - Auto-update duration: 30 minutes");
-    LOG_INF("  - Bootloader control: enabled via BLE ⭐");
-    LOG_INF("  - Bond clear: via keymap (P0.17/D2 button)");
+    LOG_INF("  - Storage threshold: %d%%", STORAGE_THRESHOLD);
+    LOG_INF("  - Bootloader control: enabled");
     
     return 0;
 }
@@ -706,58 +731,69 @@ SYS_INIT(battery_monitor_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
  * 
  * Characteristics:
  * 1. Power Control (12345678-1234-5678-1234-56789abcdef1)
- *    - Read: Get current power state (0x00=OFF, 0x01=ON)
- *    - Write: Control power (0x00=OFF, 0x01=ON, 0x02=TOGGLE)
- *    - Notify: Notifies when power state changes
+ *    - Read/Write/Notify
+ *    - Commands: 0x00=OFF, 0x01=ON, 0x02=TOGGLE
  * 
- * 2. Temperature (12345678-1234-5678-1234-56789abcdef2)
- *    - Read: Get current temperature (int16_t in 0.01°C)
- *    - Notify: Updates every 10 seconds (when auto-update active)
+ * 2. Internal Temperature (12345678-1234-5678-1234-56789abcdef2)
+ *    - Read/Notify - nRF52840 die temperature
+ *    - Format: int16_t in 0.01°C (2550 = 25.50°C)
  * 
  * 3. Voltage (12345678-1234-5678-1234-56789abcdef3)
- *    - Read: Get current voltage (uint16_t in millivolts)
- *    - Notify: Updates every 10 seconds (when auto-update active)
+ *    - Read/Notify - Battery voltage
+ *    - Format: uint16_t in mV (3700 = 3.7V)
  * 
- * 4. Bootloader Control (12345678-1234-5678-1234-56789abcdef4) ⭐ NEW
- *    - Write: Control bootloader/reset
- *      * 0x42 = Enter bootloader mode (for firmware flashing)
- *      * 0x52 = Reset device (normal reboot)
+ * 4. Bootloader Control (12345678-1234-5678-1234-56789abcdef4)
+ *    - Write only
+ *    - Commands: 0x42=Bootloader, 0x52=Reset
  * 
- * Temperature Format:
- * - Value: int16_t (2 bytes, little-endian)
- * - Unit: 0.01°C
- * - Example: 2550 = 25.50°C
- * 
- * Voltage Format:
- * - Value: uint16_t (2 bytes, little-endian)
- * - Unit: millivolts (mV)
- * - Example: 3700 = 3.7V
- * - Range: 3000-4200 mV (typical LiPo)
+ * 5. External Temperature (12345678-1234-5678-1234-56789abcdef5) ⭐ NEW
+ *    - Read/Notify - NTC thermistor temperature
+ *    - Format: int16_t in 0.01°C (2550 = 25.50°C)
  * 
  * ============================================================================
- * Bootloader Control Usage
+ * Hardware Connections
  * ============================================================================
  * 
- * To enter bootloader mode via BLE:
- * 1. Connect to device via Bluetooth
- * 2. Find characteristic: 12345678-1234-5678-1234-56789abcdef4
- * 3. Write value: 0x42 (decimal 66)
- * 4. Device will reboot to bootloader after 2 seconds
- * 5. Ready for firmware flashing via USB
+ * NTC Thermistor Connection:
  * 
- * To reset device:
- * 1. Write value: 0x52 (decimal 82)
- * 2. Device will reboot normally after 2 seconds
+ *     VCC (3.3V)
+ *         │
+ *         ├─── 10kΩ resistor
+ *         │
+ *         ├─────────── P0.28 (A4/AIN4) ← ADC reads here
+ *         │
+ *         ├─── NTC thermistor (10K@25°C)
+ *         │
+ *        GND
  * 
- * Example (Python with bleak):
+ * This is a voltage divider circuit:
+ * - Series resistor: 10K ohm (connect VCC to P0.28)
+ * - NTC thermistor: 10K @ 25°C (connect P0.28 to GND)
+ * - ADC measures voltage at the midpoint
+ * 
+ * Temperature Calculation:
+ * 1. ADC reads voltage (0-3.3V)
+ * 2. Calculate NTC resistance from voltage divider
+ * 3. Use Steinhart-Hart equation with B coefficient
+ * 4. Convert to Celsius
+ * 
+ * Supported NTC Types:
+ * - 10K NTC thermistor (most common)
+ * - B coefficient: 3950 (typical for 10K NTC)
+ * - Can adjust B_COEFFICIENT constant for different thermistors
+ * 
+ * Example Python BLE client:
  * ```python
  * import asyncio
  * from bleak import BleakClient
  * 
- * UUID = "12345678-1234-5678-1234-56789abcdef4"
+ * TEMP_EXT_UUID = "12345678-1234-5678-1234-56789abcdef5"
  * 
- * async def enter_bootloader(address):
+ * async def read_external_temp(address):
  *     async with BleakClient(address) as client:
+ *         data = await client.read_gatt_char(TEMP_EXT_UUID)
+ *         temp_raw = int.from_bytes(data, 'little', signed=True)
+ *         temp_c = temp_raw / 100.0
+ *         print(f"External temperature: {temp_c:.2f}°C")
+ * ```
  */
-
- 
