@@ -245,24 +245,31 @@ static bool bootloader_intentional = false;
 
 static void enter_bootloader_mode(void) {
     if (!bootloader_intentional) {
-        LOG_ERR("Bootloader trigger blocked");
+        LOG_ERR("Bootloader trigger blocked - not intentional");
         return;
     }
-    LOG_WRN("ENTERING BOOTLOADER");
+    LOG_WRN("========================================");
+    LOG_WRN("ENTERING BOOTLOADER VIA KEYMAP");
+    LOG_WRN("========================================");
     bootloader_intentional = false;
+    
     k_sleep(K_MSEC(100));
     
     raise_zmk_position_state_changed((struct zmk_position_state_changed){
         .position = 99, .state = true, .timestamp = k_uptime_get()
     });
+    
     k_sleep(K_MSEC(10));
+    
     raise_zmk_position_state_changed((struct zmk_position_state_changed){
         .position = 99, .state = false, .timestamp = k_uptime_get()
     });
 }
 
 static void reset_device(void) {
+    LOG_WRN("========================================");
     LOG_WRN("RESETTING DEVICE");
+    LOG_WRN("========================================");
     k_sleep(K_MSEC(100));
     sys_reboot(SYS_REBOOT_COLD);
 }
@@ -279,18 +286,21 @@ static void start_auto_updates(void) {
     if (!auto_update_active) {
         auto_update_active = true;
         auto_update_start_time = k_uptime_get();
-        LOG_INF("Auto-updates STARTED");
+        LOG_INF("Auto-updates STARTED - 30 min duration");
     } else {
         auto_update_start_time = k_uptime_get();
+        LOG_DBG("Auto-update timer RESET");
     }
 }
 
 static bool should_auto_update(void) {
     if (!auto_update_active) return false;
     
-    if (k_uptime_get() - auto_update_start_time >= AUTO_UPDATE_DURATION_MS) {
+    int64_t elapsed_ms = k_uptime_get() - auto_update_start_time;
+    
+    if (elapsed_ms >= AUTO_UPDATE_DURATION_MS) {
         auto_update_active = false;
-        LOG_INF("Auto-updates STOPPED");
+        LOG_INF("Auto-updates STOPPED - 30 minutes elapsed");
         return false;
     }
     return true;
@@ -308,21 +318,36 @@ static int16_t read_ntc_temperature(void) {
         .buffer_size = sizeof(buf),
     };
     
-    if (ARRAY_SIZE(adc_channels) == 0) return 0;
+    if (ARRAY_SIZE(adc_channels) == 0) {
+        LOG_ERR("No ADC channels configured");
+        return 0;
+    }
     
     const struct adc_dt_spec *channel = &adc_channels[0];
     
     err = adc_sequence_init_dt(channel, &sequence);
-    if (err < 0) return 0;
+    if (err < 0) {
+        LOG_ERR("Failed to init ADC sequence: %d", err);
+        return 0;
+    }
     
     err = adc_read(channel->dev, &sequence);
-    if (err < 0) return 0;
+    if (err < 0) {
+        LOG_ERR("Failed to read ADC: %d", err);
+        return 0;
+    }
     
     int32_t val_mv = buf;
     err = adc_raw_to_millivolts_dt(channel, &val_mv);
-    if (err < 0) return 0;
+    if (err < 0) {
+        LOG_ERR("Failed to convert to mV: %d", err);
+        return 0;
+    }
     
-    if (val_mv >= NTC_REFERENCE_MV) return 0;
+    if (val_mv >= NTC_REFERENCE_MV) {
+        LOG_WRN("NTC voltage at max - thermistor may be disconnected");
+        return 0;
+    }
     
     float voltage = (float)val_mv / 1000.0f;
     float v_ref = (float)NTC_REFERENCE_MV / 1000.0f;
@@ -330,8 +355,14 @@ static int16_t read_ntc_temperature(void) {
     float ln_ratio = logf(ntc_resistance / NTC_NOMINAL_RESISTANCE);
     float temp_kelvin = 1.0f / ((1.0f / (NTC_NOMINAL_TEMP + 273.15f)) + 
                                 (ln_ratio / NTC_B_COEFFICIENT));
+    float temp_celsius = temp_kelvin - 273.15f;
     
-    return (int16_t)((temp_kelvin - 273.15f) * 100.0f);
+    int16_t temp_hundredths = (int16_t)(temp_celsius * 100.0f);
+    
+    LOG_DBG("NTC: %d mV, %.1f kΩ, %.2f°C", 
+            val_mv, ntc_resistance/1000.0f, temp_celsius);
+    
+    return temp_hundredths;
 }
 
 // ============================================================================
@@ -340,30 +371,43 @@ static int16_t read_ntc_temperature(void) {
 
 static void read_battery_voltage(void) {
     const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
-    if (!device_is_ready(battery)) return;
+    
+    if (!device_is_ready(battery)) {
+        LOG_WRN("Battery sensor not ready");
+        return;
+    }
 
-    if (sensor_sample_fetch(battery) != 0) return;
+    int rc = sensor_sample_fetch(battery);
+    if (rc != 0) {
+        LOG_WRN("Failed to fetch battery: %d", rc);
+        return;
+    }
 
     struct sensor_value voltage;
-    int rc;
+    int rc2;
 
     if (discovered_channel != SENSOR_CHAN_PRIV_START) {
-        rc = sensor_channel_get(battery, discovered_channel, &voltage);
+        rc2 = sensor_channel_get(battery, discovered_channel, &voltage);
     } else {
         static const enum sensor_channel candidates[] = {
             SENSOR_CHAN_VOLTAGE, SENSOR_CHAN_ALL, SENSOR_CHAN_GAUGE_VOLTAGE
         };
         for (int i = 0; i < ARRAY_SIZE(candidates); i++) {
-            rc = sensor_channel_get(battery, candidates[i], &voltage);
-            if (rc == 0) {
+            rc2 = sensor_channel_get(battery, candidates[i], &voltage);
+            if (rc2 == 0) {
                 discovered_channel = candidates[i];
+                LOG_INF("Voltage channel discovered: %d", i);
                 break;
             }
         }
     }
 
-    if (rc == 0) {
+    if (rc2 == 0) {
         current_voltage_mv = (voltage.val1 * 1000) + (voltage.val2 / 1000);
+        LOG_INF("Battery: %d mV", current_voltage_mv);
+    } else {
+        LOG_ERR("No valid voltage channel");
+        current_voltage_mv = 0;
     }
 }
 
@@ -372,13 +416,30 @@ static void read_battery_voltage(void) {
 // ============================================================================
 
 static int16_t read_internal_temp(void) {
-    if (!temp_dev) return 0;
-    
     struct sensor_value temp_value;
-    if (sensor_sample_fetch(temp_dev) < 0) return 0;
-    if (sensor_channel_get(temp_dev, SENSOR_CHAN_DIE_TEMP, &temp_value) < 0) return 0;
+    int ret;
     
-    return (temp_value.val1 * 100) + (temp_value.val2 / 10000);
+    if (temp_dev == NULL) {
+        LOG_ERR("Internal temp device not ready");
+        return 0;
+    }
+    
+    ret = sensor_sample_fetch(temp_dev);
+    if (ret < 0) {
+        LOG_ERR("Failed to fetch internal temp: %d", ret);
+        return 0;
+    }
+    
+    ret = sensor_channel_get(temp_dev, SENSOR_CHAN_DIE_TEMP, &temp_value);
+    if (ret < 0) {
+        LOG_ERR("Failed to get internal temp: %d", ret);
+        return 0;
+    }
+    
+    int16_t temp_celsius = temp_value.val1 * 100;
+    temp_celsius += temp_value.val2 / 10000;
+    
+    return temp_celsius;
 }
 
 // ============================================================================
@@ -387,7 +448,11 @@ static int16_t read_internal_temp(void) {
 
 static void update_all_sensors(void) {
     temp_internal = read_internal_temp();
+    LOG_INF("Internal temp: %.2f°C", temp_internal / 100.0f);
+    
     temp_external = read_ntc_temperature();
+    LOG_INF("External temp: %.2f°C", temp_external / 100.0f);
+    
     read_battery_voltage();
     
     bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], &temp_internal, sizeof(temp_internal));
@@ -397,7 +462,13 @@ static void update_all_sensors(void) {
 
 static void update_work_handler(struct k_work *work) {
     if (!should_auto_update()) return;
+    
     update_all_sensors();
+    
+    int64_t elapsed = k_uptime_get() - auto_update_start_time;
+    int remaining_min = (AUTO_UPDATE_DURATION_MS - elapsed) / 60000;
+    LOG_DBG("Auto-update (%d min left)", remaining_min);
+    
     k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
 }
 
@@ -406,14 +477,21 @@ static void update_work_handler(struct k_work *work) {
 // ============================================================================
 
 static void set_power_state(bool on) {
-    if (!gpio_dev) return;
+    if (gpio_dev == NULL) {
+        LOG_ERR("GPIO not ready");
+        return;
+    }
     
-    if (gpio_pin_set(gpio_dev, MOSFET_PIN, on ? 1 : 0) < 0) return;
+    int ret = gpio_pin_set(gpio_dev, MOSFET_PIN, on ? 1 : 0);
+    if (ret < 0) {
+        LOG_ERR("Failed to set MOSFET: %d", ret);
+        return;
+    }
     
     power_state = on;
-    LOG_INF("Power %s", on ? "ON" : "OFF");
+    LOG_INF("Battery power %s", on ? "ON" : "OFF");
     
-    uint8_t status = on ? 0x01 : 0x00;
+    uint8_t status = power_state ? 0x01 : 0x00;
     bt_gatt_notify(NULL, &battery_monitor_svc.attrs[2], &status, sizeof(status));
 }
 
@@ -427,14 +505,22 @@ bool battery_monitor_get_power_state(void) { return power_state; }
 // ============================================================================
 
 static void check_auto_mosfet(uint8_t percent) {
-    if (auto_settings.auto_on_enabled && percent < auto_settings.auto_on_percent && !power_state) {
-        LOG_WRN("AUTO ON: %d%% < %d%%", percent, auto_settings.auto_on_percent);
-        set_power_state(true);
+    // Check AUTO ON (independent control)
+    if (auto_settings.auto_on_enabled) {
+        if (percent < auto_settings.auto_on_percent && !power_state) {
+            LOG_WRN("🔋 AUTO ON: Battery %d%% < %d%% - Enabling MOSFET", 
+                    percent, auto_settings.auto_on_percent);
+            set_power_state(true);
+        }
     }
     
-    if (auto_settings.auto_off_enabled && percent > auto_settings.auto_off_percent && power_state) {
-        LOG_INF("AUTO OFF: %d%% > %d%%", percent, auto_settings.auto_off_percent);
-        set_power_state(false);
+    // Check AUTO OFF (independent control)
+    if (auto_settings.auto_off_enabled) {
+        if (percent > auto_settings.auto_off_percent && power_state) {
+            LOG_INF("🔌 AUTO OFF: Battery %d%% > %d%% - Disabling MOSFET", 
+                    percent, auto_settings.auto_off_percent);
+            set_power_state(false);
+        }
     }
 }
 
@@ -444,19 +530,34 @@ static void check_auto_mosfet(uint8_t percent) {
 
 static int battery_level_listener(const zmk_event_t *eh) {
     struct zmk_battery_state_changed *ev = as_zmk_battery_state_changed(eh);
-    if (!ev) return 0;
+    if (ev == NULL) return 0;
     
     uint8_t percent = ev->state_of_charge;
+    LOG_INF("Battery: %d%%", percent);
     
+    // Auto MOSFET control
     check_auto_mosfet(percent);
     
+    // Storage mode (always active)
     if (percent <= auto_settings.storage_percent && power_state) {
-        LOG_WRN("Storage mode: %d%%", percent);
+        LOG_WRN("Storage mode at %d%%", percent);
         set_power_state(false);
     }
     
-    if (percent <= 20 && power_state) {
-        set_power_state(false);
+    // Warnings
+    if (percent <= 35 && percent > 20) {
+        if (last_battery_percent > 35) {
+            LOG_WRN("Battery low: %d%%", percent);
+        }
+    }
+    
+    if (percent <= 20) {
+        if (last_battery_percent > 20) {
+            LOG_ERR("Battery critical: %d%%", percent);
+        }
+        if (power_state) {
+            set_power_state(false);
+        }
     }
     
     last_battery_percent = percent;
@@ -479,61 +580,86 @@ static ssize_t read_power_control(struct bt_conn *conn, const struct bt_gatt_att
 
 static ssize_t write_power_control(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                     const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
-    if (offset + len > sizeof(uint8_t)) return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    if (offset + len > sizeof(uint8_t)) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
 
     uint8_t cmd = *((uint8_t *)buf);
+    LOG_INF("Power command: 0x%02X", cmd);
     
     switch (cmd) {
-        case CMD_POWER_OFF: battery_monitor_power_off(); break;
-        case CMD_POWER_ON: battery_monitor_power_on(); break;
-        case CMD_POWER_TOGGLE: battery_monitor_power_toggle(); break;
-        default: return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+        case CMD_POWER_OFF: 
+            battery_monitor_power_off(); 
+            break;
+        case CMD_POWER_ON: 
+            battery_monitor_power_on(); 
+            break;
+        case CMD_POWER_TOGGLE: 
+            battery_monitor_power_toggle(); 
+            break;
+        default:
+            LOG_WRN("Unknown command: 0x%02X", cmd);
+            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
     return len;
 }
 
 static ssize_t read_temp_internal(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                    void *buf, uint16_t len, uint16_t offset) {
+    LOG_INF("Internal temp read - starting auto-updates");
     temp_internal = read_internal_temp();
+    
     start_auto_updates();
     if (!k_work_delayable_is_pending(&update_work)) {
         k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
     }
+    
     return bt_gatt_attr_read(conn, attr, buf, len, offset, &temp_internal, sizeof(temp_internal));
 }
 
 static ssize_t read_temp_external(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                    void *buf, uint16_t len, uint16_t offset) {
+    LOG_INF("External temp read - starting auto-updates");
     temp_external = read_ntc_temperature();
+    
     start_auto_updates();
     if (!k_work_delayable_is_pending(&update_work)) {
         k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
     }
+    
     return bt_gatt_attr_read(conn, attr, buf, len, offset, &temp_external, sizeof(temp_external));
 }
 
 static ssize_t read_voltage(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                              void *buf, uint16_t len, uint16_t offset) {
+    LOG_INF("Voltage read - starting auto-updates");
     read_battery_voltage();
+    
     start_auto_updates();
     if (!k_work_delayable_is_pending(&update_work)) {
         k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
     }
+    
     return bt_gatt_attr_read(conn, attr, buf, len, offset, &current_voltage_mv, sizeof(current_voltage_mv));
 }
 
 static ssize_t write_bootloader(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                  const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
-    if (offset + len > sizeof(uint8_t)) return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    if (offset + len > sizeof(uint8_t)) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
 
     uint8_t cmd = *((uint8_t *)buf);
+    LOG_WRN("Bootloader command: 0x%02X", cmd);
     
     switch (cmd) {
         case CMD_ENTER_BOOTLOADER:
+            LOG_WRN("⚠️  BOOTLOADER in 2s");
             bootloader_intentional = true;
             k_work_reschedule(&bootloader_work, K_MSEC(2000));
             break;
         case CMD_RESET_DEVICE:
+            LOG_WRN("⚠️  RESET in 2s");
             k_sleep(K_MSEC(2000));
             reset_device();
             break;
@@ -553,33 +679,66 @@ static ssize_t read_auto_settings(struct bt_conn *conn, const struct bt_gatt_att
         auto_settings.storage_percent,
         0x00
     };
+    
+    LOG_INF("Read auto settings: ON_EN=%d, OFF_EN=%d, ON<%d%%, OFF>%d%%, STOR=%d%%",
+            data[0], data[1], data[2], data[3], data[4]);
+    
     return bt_gatt_attr_read(conn, attr, buf, len, offset, data, sizeof(data));
 }
 
 static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                     const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
-    if (offset + len > 6) return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    if (offset + len > 6) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
 
-    const uint8_t *data = (const uint8_t *)buf;
+    const uint8_t *data = (const uint8_t *)buf);
     
-    if (data[2] > 100 || data[3] > 100 || data[4] > 100 || data[2] >= data[3]) {
+    // Validate
+    if (data[2] > 100 || data[3] > 100 || data[4] > 100) {
+        LOG_ERR("Invalid percentage values");
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
     
+    if (data[2] >= data[3]) {
+        LOG_ERR("auto_on must be < auto_off");
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    // Update
     auto_settings.auto_on_enabled = (data[0] != 0);
     auto_settings.auto_off_enabled = (data[1] != 0);
     auto_settings.auto_on_percent = data[2];
     auto_settings.auto_off_percent = data[3];
     auto_settings.storage_percent = data[4];
     
-    LOG_WRN("Settings updated: ON=%s<%d%%, OFF=%s>%d%%, STOR=%d%%",
-            auto_settings.auto_on_enabled ? "EN" : "DIS", auto_settings.auto_on_percent,
-            auto_settings.auto_off_enabled ? "EN" : "DIS", auto_settings.auto_off_percent,
-            auto_settings.storage_percent);
+    LOG_WRN("⚙️  Auto settings updated:");
+    LOG_WRN("   Auto ON: %s at <%d%%", 
+            auto_settings.auto_on_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.auto_on_percent);
+    LOG_WRN("   Auto OFF: %s at >%d%%", 
+            auto_settings.auto_off_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.auto_off_percent);
+    LOG_WRN("   Storage: %d%%", auto_settings.storage_percent);
     
-    save_settings();
+    // Save to NVS
+    int rc = save_settings();
+    if (rc) {
+        LOG_ERR("Failed to save settings: %d", rc);
+        return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+    }
     
-    bt_gatt_notify(NULL, attr, data, 6);
+    // Notify
+    uint8_t notify_data[6];
+    notify_data[0] = auto_settings.auto_on_enabled ? 0x01 : 0x00;
+    notify_data[1] = auto_settings.auto_off_enabled ? 0x01 : 0x00;
+    notify_data[2] = auto_settings.auto_on_percent;
+    notify_data[3] = auto_settings.auto_off_percent;
+    notify_data[4] = auto_settings.storage_percent;
+    notify_data[5] = 0x00;
+    bt_gatt_notify(NULL, attr, notify_data, sizeof(notify_data));
+    
+    // Apply immediately
     check_auto_mosfet(last_battery_percent);
     
     return len;
@@ -635,7 +794,7 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
 static int battery_monitor_init(void) {
     int ret;
     
-    LOG_INF("Battery Monitor Init");
+    LOG_INF("Initializing Battery Monitor with Auto MOSFET...");
     
     gpio_dev = DEVICE_DT_GET(DT_NODELABEL(gpio0));
     if (!device_is_ready(gpio_dev)) {
@@ -645,30 +804,35 @@ static int battery_monitor_init(void) {
     
     temp_dev = DEVICE_DT_GET(DT_NODELABEL(temp));
     if (!device_is_ready(temp_dev)) {
-        LOG_ERR("Temp not ready");
+        LOG_ERR("Internal temp not ready");
         return -ENODEV;
     }
     
     battery_dev = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
     if (!device_is_ready(battery_dev)) {
+        LOG_WRN("Battery sensor not ready");
         battery_dev = NULL;
     }
     
+    // Initialize ADC for NTC
     for (int i = 0; i < ARRAY_SIZE(adc_channels); i++) {
         if (!adc_is_ready_dt(&adc_channels[i])) {
-            LOG_ERR("ADC %d not ready", i);
+            LOG_ERR("ADC channel %d not ready", i);
             return -ENODEV;
         }
+        
         ret = adc_channel_setup_dt(&adc_channels[i]);
         if (ret < 0) {
-            LOG_ERR("ADC setup failed: %d", ret);
+            LOG_ERR("Failed to setup ADC channel %d: %d", i, ret);
             return ret;
         }
+        LOG_INF("ADC channel %d ready (NTC thermistor)", i);
     }
     
+    // Configure MOSFET
     ret = gpio_pin_configure(gpio_dev, MOSFET_PIN, GPIO_OUTPUT_INACTIVE);
     if (ret < 0) {
-        LOG_ERR("MOSFET config failed: %d", ret);
+        LOG_ERR("Failed to configure MOSFET: %d", ret);
         return ret;
     }
     
@@ -677,14 +841,24 @@ static int battery_monitor_init(void) {
     k_work_init_delayable(&update_work, update_work_handler);
     k_work_init_delayable(&bootloader_work, bootloader_work_handler);
     
-    LOG_INF("✅ Battery Monitor OK");
-    LOG_INF("  Auto ON: %s at <%d%%", 
-            auto_settings.auto_on_enabled ? "YES" : "NO",
+    LOG_INF("✅ Battery Monitor initialized");
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    LOG_INF("  MOSFET: P0.%d", MOSFET_PIN);
+    LOG_INF("  Internal temp: enabled");
+    LOG_INF("  External NTC: enabled (P0.28/A4)");
+    LOG_INF("  NTC config: 10K@25C, B=%d", NTC_B_COEFFICIENT);
+    LOG_INF("  Voltage sensor: %s", battery_dev ? "enabled" : "disabled");
+    LOG_INF("  Settings: Zephyr Settings API (NVS)");
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    LOG_INF("⚙️  AUTO MOSFET SETTINGS:");
+    LOG_INF("  Auto ON: %s at Battery < %d%%", 
+            auto_settings.auto_on_enabled ? "ENABLED" : "DISABLED",
             auto_settings.auto_on_percent);
-    LOG_INF("  Auto OFF: %s at >%d%%", 
-            auto_settings.auto_off_enabled ? "YES" : "NO",
+    LOG_INF("  Auto OFF: %s at Battery > %d%%", 
+            auto_settings.auto_off_enabled ? "ENABLED" : "DISABLED",
             auto_settings.auto_off_percent);
-    LOG_INF("  Settings: NVS (ZMK core enabled)");
+    LOG_INF("  Storage: %d%%", auto_settings.storage_percent);
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     return 0;
 }
