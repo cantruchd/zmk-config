@@ -20,8 +20,8 @@
                 &none &none &none &none &none  &none &none &none &none &none 
                 &none &none &none &none &none  &none &none &none &none &none 
                 &none &none &none &none &none  &none &none &none &none &none 
-                &none &none &none &none &none  &none &none &none
-                &bootloader
+                 &bootloader &bootloader &bootloader &bootloader &bootloader &bootloader &bootloader &bootloader
+                &bootloader &bootloader &bootloader
             >;
         };
     };
