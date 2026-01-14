@@ -1,48 +1,10 @@
-/*
- * battery_monitor.keymap
- * Keymap for Battery Monitor Shield
- * 
- * Location: config/boards/shields/battery_monitor/battery_monitor.keymap
- * 
- * Single key: Bond clear button on P0.17 (D2)
- * Press to clear all Bluetooth bonds and reboot
- */
-
-#include <behaviors.dtsi>
-#include <dt-bindings/zmk/keys.h>
-#include <dt-bindings/zmk/bt.h>
-
 / {
     keymap {
         compatible = "zmk,keymap";
-
         default_layer {
-            /*
-             * Single key layout:
-             * .-----------.
-             * | BT_CLR_ALL|  <- Press to clear all bonds + reboot
-             * '-----------'
-             */
-            bindings = <
-                &none
+            bindings = 
+                &bootloader  // Position 0
             >;
         };
     };
 };
-
-/*
- * Usage:
- * - Press the button connected to P0.17 (D2 pin)
- * - All Bluetooth bonds will be cleared
- * - Device will automatically reboot and start fresh advertising
- * 
- * Hardware:
- * - Connect momentary push button between P0.17 and GND
- * - Internal pull-up resistor is enabled
- * - Button press = LOW signal (active low)
- * 
- * Alternative: Reed Switch
- * - Replace button with reed switch
- * - Wave magnet near switch to trigger bond clear
- * - Same pin (P0.17) and behavior
- */

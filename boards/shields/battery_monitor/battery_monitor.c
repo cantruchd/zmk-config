@@ -148,25 +148,38 @@ static ssize_t write_bootloader(struct bt_conn *conn,
 // ============================================================================
 // ⭐ NEW: Bootloader Control Functions
 // ============================================================================
-
+#include <zmk/events/position_state_changed.h>  // ⭐ ADD
+#include <zmk/event_manager.h>                   // ⭐ ADD
 /**
- * Enter bootloader/DFU mode
- * This allows firmware flashing via USB without physical reset button
+ * Enter bootloader via keymap event
  */
 static void enter_bootloader_mode(void) {
     LOG_WRN("========================================");
-    LOG_WRN("ENTERING BOOTLOADER MODE");
-    LOG_WRN("Device will reboot to bootloader");
-    LOG_WRN("Ready for firmware flashing");
+    LOG_WRN("ENTERING BOOTLOADER VIA KEYMAP");
     LOG_WRN("========================================");
     
-    volatile uint32_t *dfu = (uint32_t *)0x20007F7C;
-    *dfu = 0x4e524653;
-    NRF_POWER->GPREGRET = 0xB1;
-    NVIC_SystemReset();
+    k_sleep(K_MSEC(100));
     
+    // Press position 0
+    raise_zmk_position_state_changed(
+        (struct zmk_position_state_changed){
+            .position = 0,
+            .state = true,
+            .timestamp = k_uptime_get()
+        }
+    );
+    
+    k_sleep(K_MSEC(10));
+    
+    // Release position 0
+    raise_zmk_position_state_changed(
+        (struct zmk_position_state_changed){
+            .position = 0,
+            .state = false,
+            .timestamp = k_uptime_get()
+        }
+    );
 }
-
 /**
  * Reset device (normal reboot, not bootloader)
  */
