@@ -452,7 +452,7 @@ static int16_t read_internal_temp(void) {
 // Sensors Update
 // ============================================================================
 
-sstatic void update_all_sensors(void) {
+static void update_all_sensors(void) {
     temp_internal = read_internal_temp();
     // Tách float thành int
     int temp_int_int = temp_internal / 100;
