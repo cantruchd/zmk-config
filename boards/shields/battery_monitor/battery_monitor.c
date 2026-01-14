@@ -186,7 +186,7 @@ static void enter_bootloader_mode(void) {
     
     raise_zmk_position_state_changed(
         (struct zmk_position_state_changed){
-            .position = 0,
+            .position = 99,
             .state = true,
             .timestamp = k_uptime_get()
         }
@@ -196,7 +196,7 @@ static void enter_bootloader_mode(void) {
     
     raise_zmk_position_state_changed(
         (struct zmk_position_state_changed){
-            .position = 0,
+            .position = 99,
             .state = false,
             .timestamp = k_uptime_get()
         }
