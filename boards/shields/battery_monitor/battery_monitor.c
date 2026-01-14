@@ -1,6 +1,6 @@
 /*
  * battery_monitor.c
- * Custom battery monitoring with Auto MOSFET control
+ * Custom battery monitoring with Auto MOSFET control + Temperature Protection
  * 
  * Settings storage: Uses Zephyr Settings API directly (ZMK core already enables NVS)
  * No need to add CONFIG_SETTINGS or CONFIG_NVS - already in ZMK core!
@@ -43,12 +43,22 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define NTC_NOMINAL_TEMP      25.0
 #define NTC_B_COEFFICIENT     3950
 
-// Defaults
+// Defaults - Battery
 #define DEFAULT_AUTO_ON_ENABLE    true
 #define DEFAULT_AUTO_OFF_ENABLE   true
 #define DEFAULT_AUTO_ON_PERCENT   30
 #define DEFAULT_AUTO_OFF_PERCENT  80
 #define DEFAULT_STORAGE_PERCENT   40
+
+// Defaults - Temperature (in hundredths of degree Celsius)
+#define DEFAULT_TEMP_INT_HIGH_ENABLE   false
+#define DEFAULT_TEMP_INT_HIGH_THRESHOLD 5000   // 50.00°C
+#define DEFAULT_TEMP_INT_LOW_ENABLE    false
+#define DEFAULT_TEMP_INT_LOW_THRESHOLD 1000    // 10.00°C
+#define DEFAULT_TEMP_EXT_HIGH_ENABLE   false
+#define DEFAULT_TEMP_EXT_HIGH_THRESHOLD 6000   // 60.00°C
+#define DEFAULT_TEMP_EXT_LOW_ENABLE    false
+#define DEFAULT_TEMP_EXT_LOW_THRESHOLD 500     // 5.00°C
 
 #define UPDATE_INTERVAL_MS      10000
 #define AUTO_UPDATE_DURATION_MS 1800000
@@ -95,6 +105,11 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define BT_UUID_AUTO_SETTINGS \
     BT_UUID_DECLARE_128(BT_UUID_AUTO_SETTINGS_VAL)
 
+#define BT_UUID_TEMP_SETTINGS_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef7)
+#define BT_UUID_TEMP_SETTINGS \
+    BT_UUID_DECLARE_128(BT_UUID_TEMP_SETTINGS_VAL)
+
 // Commands
 #define CMD_POWER_OFF    0x00
 #define CMD_POWER_ON     0x01
@@ -130,6 +145,17 @@ struct auto_mosfet_settings {
     uint8_t storage_percent;
 };
 
+struct temp_protection_settings {
+    bool int_high_enabled;
+    int16_t int_high_threshold;  // in hundredths °C
+    bool int_low_enabled;
+    int16_t int_low_threshold;   // in hundredths °C
+    bool ext_high_enabled;
+    int16_t ext_high_threshold;  // in hundredths °C
+    bool ext_low_enabled;
+    int16_t ext_low_threshold;   // in hundredths °C
+};
+
 // ============================================================================
 // Global Variables
 // ============================================================================
@@ -159,6 +185,17 @@ static struct auto_mosfet_settings auto_settings = {
     .storage_percent = DEFAULT_STORAGE_PERCENT,
 };
 
+static struct temp_protection_settings temp_settings = {
+    .int_high_enabled = DEFAULT_TEMP_INT_HIGH_ENABLE,
+    .int_high_threshold = DEFAULT_TEMP_INT_HIGH_THRESHOLD,
+    .int_low_enabled = DEFAULT_TEMP_INT_LOW_ENABLE,
+    .int_low_threshold = DEFAULT_TEMP_INT_LOW_THRESHOLD,
+    .ext_high_enabled = DEFAULT_TEMP_EXT_HIGH_ENABLE,
+    .ext_high_threshold = DEFAULT_TEMP_EXT_HIGH_THRESHOLD,
+    .ext_low_enabled = DEFAULT_TEMP_EXT_LOW_ENABLE,
+    .ext_low_threshold = DEFAULT_TEMP_EXT_LOW_THRESHOLD,
+};
+
 extern const struct bt_gatt_service_static battery_monitor_svc;
 
 // Forward declarations
@@ -178,6 +215,10 @@ static ssize_t read_auto_settings(struct bt_conn *conn, const struct bt_gatt_att
                                    void *buf, uint16_t len, uint16_t offset);
 static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                     const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
+static ssize_t read_temp_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset);
+static ssize_t write_temp_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                    const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
 
 // ============================================================================
 // Settings Management (using Zephyr Settings API like ZMK Studio)
@@ -186,6 +227,7 @@ static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_at
 static int settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
     const char *next;
     
+    // Battery settings
     if (settings_name_steq(name, "cfg", &next) && !next) {
         if (len != 5) {
             return -EINVAL;
@@ -202,7 +244,7 @@ static int settings_set(const char *name, size_t len, settings_read_cb read_cb, 
         auto_settings.auto_off_percent = data[3];
         auto_settings.storage_percent = data[4];
         
-        LOG_INF("Settings loaded from NVS:");
+        LOG_INF("Battery settings loaded from NVS:");
         LOG_INF("  Auto ON: %s at <%d%%", 
                 auto_settings.auto_on_enabled ? "ENABLED" : "DISABLED",
                 auto_settings.auto_on_percent);
@@ -214,12 +256,53 @@ static int settings_set(const char *name, size_t len, settings_read_cb read_cb, 
         return 0;
     }
     
+    // Temperature settings
+    if (settings_name_steq(name, "temp", &next) && !next) {
+        if (len != 12) {
+            return -EINVAL;
+        }
+        
+        uint8_t data[12];
+        if (read_cb(cb_arg, data, sizeof(data)) != sizeof(data)) {
+            return -EINVAL;
+        }
+        
+        temp_settings.int_high_enabled = (data[0] != 0);
+        temp_settings.int_high_threshold = (int16_t)((data[1] << 8) | data[2]);
+        temp_settings.int_low_enabled = (data[3] != 0);
+        temp_settings.int_low_threshold = (int16_t)((data[4] << 8) | data[5]);
+        temp_settings.ext_high_enabled = (data[6] != 0);
+        temp_settings.ext_high_threshold = (int16_t)((data[7] << 8) | data[8]);
+        temp_settings.ext_low_enabled = (data[9] != 0);
+        temp_settings.ext_low_threshold = (int16_t)((data[10] << 8) | data[11]);
+        
+        LOG_INF("Temperature settings loaded from NVS:");
+        LOG_INF("  Internal High: %s at >%d.%02d°C", 
+                temp_settings.int_high_enabled ? "ENABLED" : "DISABLED",
+                temp_settings.int_high_threshold / 100,
+                abs(temp_settings.int_high_threshold % 100));
+        LOG_INF("  Internal Low: %s at <%d.%02d°C", 
+                temp_settings.int_low_enabled ? "ENABLED" : "DISABLED",
+                temp_settings.int_low_threshold / 100,
+                abs(temp_settings.int_low_threshold % 100));
+        LOG_INF("  External High: %s at >%d.%02d°C", 
+                temp_settings.ext_high_enabled ? "ENABLED" : "DISABLED",
+                temp_settings.ext_high_threshold / 100,
+                abs(temp_settings.ext_high_threshold % 100));
+        LOG_INF("  External Low: %s at <%d.%02d°C", 
+                temp_settings.ext_low_enabled ? "ENABLED" : "DISABLED",
+                temp_settings.ext_low_threshold / 100,
+                abs(temp_settings.ext_low_threshold % 100));
+        
+        return 0;
+    }
+    
     return -ENOENT;
 }
 
 SETTINGS_STATIC_HANDLER_DEFINE(battery_monitor, SETTINGS_NAME, NULL, settings_set, NULL, NULL);
 
-static int save_settings(void) {
+static int save_battery_settings(void) {
     uint8_t data[5];
     data[0] = auto_settings.auto_on_enabled ? 1 : 0;
     data[1] = auto_settings.auto_off_enabled ? 1 : 0;
@@ -229,11 +312,36 @@ static int save_settings(void) {
     
     int rc = settings_save_one(SETTINGS_NAME "/cfg", data, sizeof(data));
     if (rc) {
-        LOG_ERR("Failed to save settings: %d", rc);
+        LOG_ERR("Failed to save battery settings: %d", rc);
         return rc;
     }
     
-    LOG_INF("Settings saved to NVS");
+    LOG_INF("Battery settings saved to NVS");
+    return 0;
+}
+
+static int save_temp_settings(void) {
+    uint8_t data[12];
+    data[0] = temp_settings.int_high_enabled ? 1 : 0;
+    data[1] = (temp_settings.int_high_threshold >> 8) & 0xFF;
+    data[2] = temp_settings.int_high_threshold & 0xFF;
+    data[3] = temp_settings.int_low_enabled ? 1 : 0;
+    data[4] = (temp_settings.int_low_threshold >> 8) & 0xFF;
+    data[5] = temp_settings.int_low_threshold & 0xFF;
+    data[6] = temp_settings.ext_high_enabled ? 1 : 0;
+    data[7] = (temp_settings.ext_high_threshold >> 8) & 0xFF;
+    data[8] = temp_settings.ext_high_threshold & 0xFF;
+    data[9] = temp_settings.ext_low_enabled ? 1 : 0;
+    data[10] = (temp_settings.ext_low_threshold >> 8) & 0xFF;
+    data[11] = temp_settings.ext_low_threshold & 0xFF;
+    
+    int rc = settings_save_one(SETTINGS_NAME "/temp", data, sizeof(data));
+    if (rc) {
+        LOG_ERR("Failed to save temp settings: %d", rc);
+        return rc;
+    }
+    
+    LOG_INF("Temperature settings saved to NVS");
     return 0;
 }
 
@@ -359,7 +467,6 @@ static int16_t read_ntc_temperature(void) {
     
     int16_t temp_hundredths = (int16_t)(temp_celsius * 100.0f);
     
-    // Tách float thành int để log
     int resistance_int = (int)(ntc_resistance / 1000.0f);
     int resistance_frac = (int)((ntc_resistance / 1000.0f - resistance_int) * 10);
     int temp_int = (int)temp_celsius;
@@ -449,43 +556,6 @@ static int16_t read_internal_temp(void) {
 }
 
 // ============================================================================
-// Sensors Update
-// ============================================================================
-
-static void update_all_sensors(void) {
-    temp_internal = read_internal_temp();
-    // Tách float thành int
-    int temp_int_int = temp_internal / 100;
-    int temp_int_frac = abs(temp_internal % 100);
-    LOG_INF("Internal temp: %d.%02d°C", temp_int_int, temp_int_frac);
-    
-    temp_external = read_ntc_temperature();
-    // Tách float thành int
-    int temp_ext_int = temp_external / 100;
-    int temp_ext_frac = abs(temp_external % 100);
-    LOG_INF("External temp: %d.%02d°C", temp_ext_int, temp_ext_frac);
-    
-    read_battery_voltage();
-    
-    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], &temp_internal, sizeof(temp_internal));
-    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], &current_voltage_mv, sizeof(current_voltage_mv));
-    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[11], &temp_external, sizeof(temp_external));
-}
-
-
-static void update_work_handler(struct k_work *work) {
-    if (!should_auto_update()) return;
-    
-    update_all_sensors();
-    
-    int64_t elapsed = k_uptime_get() - auto_update_start_time;
-    int remaining_min = (AUTO_UPDATE_DURATION_MS - elapsed) / 60000;
-    LOG_DBG("Auto-update (%d min left)", remaining_min);
-    
-    k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
-}
-
-// ============================================================================
 // MOSFET Control
 // ============================================================================
 
@@ -514,6 +584,56 @@ void battery_monitor_power_toggle(void) { set_power_state(!power_state); }
 bool battery_monitor_get_power_state(void) { return power_state; }
 
 // ============================================================================
+// Temperature Protection Logic
+// ============================================================================
+
+static void check_temp_protection(void) {
+    // Internal High - Turn OFF if too hot
+    if (temp_settings.int_high_enabled) {
+        if (temp_internal > temp_settings.int_high_threshold && power_state) {
+            LOG_WRN("🌡️  TEMP PROTECTION: Internal %d.%02d°C > %d.%02d°C - Disabling MOSFET", 
+                    temp_internal / 100, abs(temp_internal % 100),
+                    temp_settings.int_high_threshold / 100, 
+                    abs(temp_settings.int_high_threshold % 100));
+            set_power_state(false);
+        }
+    }
+    
+    // Internal Low - Turn ON if too cold
+    if (temp_settings.int_low_enabled) {
+        if (temp_internal < temp_settings.int_low_threshold && !power_state) {
+            LOG_INF("🌡️  TEMP RECOVERY: Internal %d.%02d°C < %d.%02d°C - Enabling MOSFET", 
+                    temp_internal / 100, abs(temp_internal % 100),
+                    temp_settings.int_low_threshold / 100, 
+                    abs(temp_settings.int_low_threshold % 100));
+            set_power_state(true);
+        }
+    }
+    
+    // External High - Turn OFF if too hot
+    if (temp_settings.ext_high_enabled) {
+        if (temp_external > temp_settings.ext_high_threshold && power_state) {
+            LOG_WRN("🌡️  TEMP PROTECTION: External %d.%02d°C > %d.%02d°C - Disabling MOSFET", 
+                    temp_external / 100, abs(temp_external % 100),
+                    temp_settings.ext_high_threshold / 100, 
+                    abs(temp_settings.ext_high_threshold % 100));
+            set_power_state(false);
+        }
+    }
+    
+    // External Low - Turn ON if too cold
+    if (temp_settings.ext_low_enabled) {
+        if (temp_external < temp_settings.ext_low_threshold && !power_state) {
+            LOG_INF("🌡️  TEMP RECOVERY: External %d.%02d°C < %d.%02d°C - Enabling MOSFET", 
+                    temp_external / 100, abs(temp_external % 100),
+                    temp_settings.ext_low_threshold / 100, 
+                    abs(temp_settings.ext_low_threshold % 100));
+            set_power_state(true);
+        }
+    }
+}
+
+// ============================================================================
 // Auto MOSFET Logic
 // ============================================================================
 
@@ -535,6 +655,43 @@ static void check_auto_mosfet(uint8_t percent) {
             set_power_state(false);
         }
     }
+}
+
+// ============================================================================
+// Sensors Update
+// ============================================================================
+
+static void update_all_sensors(void) {
+    temp_internal = read_internal_temp();
+    int temp_int_int = temp_internal / 100;
+    int temp_int_frac = abs(temp_internal % 100);
+    LOG_INF("Internal temp: %d.%02d°C", temp_int_int, temp_int_frac);
+    
+    temp_external = read_ntc_temperature();
+    int temp_ext_int = temp_external / 100;
+    int temp_ext_frac = abs(temp_external % 100);
+    LOG_INF("External temp: %d.%02d°C", temp_ext_int, temp_ext_frac);
+    
+    read_battery_voltage();
+    
+    // Check temperature protection
+    check_temp_protection();
+    
+    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], &temp_internal, sizeof(temp_internal));
+    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], &current_voltage_mv, sizeof(current_voltage_mv));
+    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[11], &temp_external, sizeof(temp_external));
+}
+
+static void update_work_handler(struct k_work *work) {
+    if (!should_auto_update()) return;
+    
+    update_all_sensors();
+    
+    int64_t elapsed = k_uptime_get() - auto_update_start_time;
+    int remaining_min = (AUTO_UPDATE_DURATION_MS - elapsed) / 60000;
+    LOG_DBG("Auto-update (%d min left)", remaining_min);
+    
+    k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
 }
 
 // ============================================================================
@@ -735,7 +892,7 @@ static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_at
     LOG_WRN("   Storage: %d%%", auto_settings.storage_percent);
     
     // Save to NVS
-    int rc = save_settings();
+    int rc = save_battery_settings();
     if (rc) {
         LOG_ERR("Failed to save settings: %d", rc);
         return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
@@ -753,6 +910,90 @@ static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_at
     
     // Apply immediately
     check_auto_mosfet(last_battery_percent);
+    
+    return len;
+}
+
+static ssize_t read_temp_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset) {
+    uint8_t data[12];
+    data[0] = temp_settings.int_high_enabled ? 0x01 : 0x00;
+    data[1] = (temp_settings.int_high_threshold >> 8) & 0xFF;
+    data[2] = temp_settings.int_high_threshold & 0xFF;
+    data[3] = temp_settings.int_low_enabled ? 0x01 : 0x00;
+    data[4] = (temp_settings.int_low_threshold >> 8) & 0xFF;
+    data[5] = temp_settings.int_low_threshold & 0xFF;
+    data[6] = temp_settings.ext_high_enabled ? 0x01 : 0x00;
+    data[7] = (temp_settings.ext_high_threshold >> 8) & 0xFF;
+    data[8] = temp_settings.ext_high_threshold & 0xFF;
+    data[9] = temp_settings.ext_low_enabled ? 0x01 : 0x00;
+    data[10] = (temp_settings.ext_low_threshold >> 8) & 0xFF;
+    data[11] = temp_settings.ext_low_threshold & 0xFF;
+    
+    LOG_INF("Read temp settings");
+    
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, data, sizeof(data));
+}
+
+static ssize_t write_temp_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                    const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    if (offset + len > 12) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+    }
+
+    const uint8_t *data = (const uint8_t *)buf;
+    
+    // Parse
+    temp_settings.int_high_enabled = (data[0] != 0);
+    temp_settings.int_high_threshold = (int16_t)((data[1] << 8) | data[2]);
+    temp_settings.int_low_enabled = (data[3] != 0);
+    temp_settings.int_low_threshold = (int16_t)((data[4] << 8) | data[5]);
+    temp_settings.ext_high_enabled = (data[6] != 0);
+    temp_settings.ext_high_threshold = (int16_t)((data[7] << 8) | data[8]);
+    temp_settings.ext_low_enabled = (data[9] != 0);
+    temp_settings.ext_low_threshold = (int16_t)((data[10] << 8) | data[11]);
+    
+    // Validate
+    if (temp_settings.int_low_threshold >= temp_settings.int_high_threshold) {
+        LOG_ERR("Internal low must be < high");
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    if (temp_settings.ext_low_threshold >= temp_settings.ext_high_threshold) {
+        LOG_ERR("External low must be < high");
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    LOG_WRN("🌡️  Temperature settings updated:");
+    LOG_WRN("   Internal High: %s at >%d.%02d°C", 
+            temp_settings.int_high_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.int_high_threshold / 100,
+            abs(temp_settings.int_high_threshold % 100));
+    LOG_WRN("   Internal Low: %s at <%d.%02d°C", 
+            temp_settings.int_low_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.int_low_threshold / 100,
+            abs(temp_settings.int_low_threshold % 100));
+    LOG_WRN("   External High: %s at >%d.%02d°C", 
+            temp_settings.ext_high_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.ext_high_threshold / 100,
+            abs(temp_settings.ext_high_threshold % 100));
+    LOG_WRN("   External Low: %s at <%d.%02d°C", 
+            temp_settings.ext_low_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.ext_low_threshold / 100,
+            abs(temp_settings.ext_low_threshold % 100));
+    
+    // Save to NVS
+    int rc = save_temp_settings();
+    if (rc) {
+        LOG_ERR("Failed to save temp settings: %d", rc);
+        return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+    }
+    
+    // Notify
+    bt_gatt_notify(NULL, attr, data, 12);
+    
+    // Apply immediately
+    check_temp_protection();
     
     return len;
 }
@@ -794,6 +1035,12 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
                           read_auto_settings, write_auto_settings, NULL),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
     
+    BT_GATT_CHARACTERISTIC(BT_UUID_TEMP_SETTINGS,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                          read_temp_settings, write_temp_settings, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    
     BT_GATT_CHARACTERISTIC(BT_UUID_BOOTLOADER,
                           BT_GATT_CHRC_WRITE,
                           BT_GATT_PERM_WRITE,
@@ -807,7 +1054,7 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
 static int battery_monitor_init(void) {
     int ret;
     
-    LOG_INF("Initializing Battery Monitor with Auto MOSFET...");
+    LOG_INF("Initializing Battery Monitor with Auto MOSFET + Temperature Protection...");
     
     gpio_dev = DEVICE_DT_GET(DT_NODELABEL(gpio0));
     if (!device_is_ready(gpio_dev)) {
@@ -863,7 +1110,7 @@ static int battery_monitor_init(void) {
     LOG_INF("  Voltage sensor: %s", battery_dev ? "enabled" : "disabled");
     LOG_INF("  Settings: Zephyr Settings API (NVS)");
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    LOG_INF("⚙️  AUTO MOSFET SETTINGS:");
+    LOG_INF("⚙️  BATTERY AUTO SETTINGS:");
     LOG_INF("  Auto ON: %s at Battery < %d%%", 
             auto_settings.auto_on_enabled ? "ENABLED" : "DISABLED",
             auto_settings.auto_on_percent);
@@ -872,6 +1119,24 @@ static int battery_monitor_init(void) {
             auto_settings.auto_off_percent);
     LOG_INF("  Storage: %d%%", auto_settings.storage_percent);
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    LOG_INF("🌡️  TEMPERATURE PROTECTION:");
+    LOG_INF("  Internal High: %s at >%d.%02d°C", 
+            temp_settings.int_high_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.int_high_threshold / 100,
+            abs(temp_settings.int_high_threshold % 100));
+    LOG_INF("  Internal Low: %s at <%d.%02d°C", 
+            temp_settings.int_low_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.int_low_threshold / 100,
+            abs(temp_settings.int_low_threshold % 100));
+    LOG_INF("  External High: %s at >%d.%02d°C", 
+            temp_settings.ext_high_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.ext_high_threshold / 100,
+            abs(temp_settings.ext_high_threshold % 100));
+    LOG_INF("  External Low: %s at <%d.%02d°C", 
+            temp_settings.ext_low_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.ext_low_threshold / 100,
+            abs(temp_settings.ext_low_threshold % 100));
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     return 0;
 }
@@ -879,35 +1144,46 @@ static int battery_monitor_init(void) {
 SYS_INIT(battery_monitor_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 /*
- * SETTINGS STORAGE - HOW IT WORKS
- * ================================
+ * TEMPERATURE PROTECTION - HOW IT WORKS
+ * =====================================
  * 
- * ZMK core already enables:
- * - CONFIG_SETTINGS=y
- * - CONFIG_NVS=y  
- * - CONFIG_FLASH=y
+ * New BLE Characteristic: BT_UUID_TEMP_SETTINGS (def7)
+ * Data format: 12 bytes
  * 
- * YOU DON'T NEED TO ADD ANYTHING TO battery_monitor.conf!
+ * [0]     int_high_enabled (0/1)
+ * [1-2]   int_high_threshold (int16_t, hundredths °C)
+ * [3]     int_low_enabled (0/1)
+ * [4-5]   int_low_threshold (int16_t, hundredths °C)
+ * [6]     ext_high_enabled (0/1)
+ * [7-8]   ext_high_threshold (int16_t, hundredths °C)
+ * [9]     ext_low_enabled (0/1)
+ * [10-11] ext_low_threshold (int16_t, hundredths °C)
  * 
- * This code uses:
- * 1. SETTINGS_STATIC_HANDLER_DEFINE - auto registers at boot
- * 2. settings_save_one() - saves to NVS partition
- * 3. Settings auto-load on boot via settings_set callback
+ * Temperature stored in hundredths: 5000 = 50.00°C
  * 
- * Storage location: NVS partition "btmon/cfg" (5 bytes)
- * 
- * Python BLE example:
+ * Python BLE Example:
  * ```python
  * import asyncio
  * from bleak import BleakClient
+ * import struct
  * 
- * UUID = "12345678-1234-5678-1234-56789abcdef6"
+ * TEMP_UUID = "12345678-1234-5678-1234-56789abcdef7"
  * 
- * async def configure(addr):
+ * async def configure_temp(addr):
  *     async with BleakClient(addr) as c:
- *         # Enable both, ON<25%, OFF>85%
- *         await c.write_gatt_char(UUID, bytes([1, 1, 25, 85, 40, 0]))
+ *         # Enable all protections:
+ *         # Internal: OFF if >50°C, ON if <10°C
+ *         # External: OFF if >60°C, ON if <5°C
+ *         data = struct.pack('>B h B h B h B h',
+ *             1, 5000,  # int high enabled, 50.00°C
+ *             1, 1000,  # int low enabled, 10.00°C
+ *             1, 6000,  # ext high enabled, 60.00°C
+ *             1, 500    # ext low enabled, 5.00°C
+ *         )
+ *         await c.write_gatt_char(TEMP_UUID, data)
  * 
- * asyncio.run(configure("XX:XX:XX:XX:XX:XX"))
+ * asyncio.run(configure_temp("XX:XX:XX:XX:XX:XX"))
  * ```
+ * 
+ * Storage: "btmon/temp" in NVS (12 bytes)
  */
