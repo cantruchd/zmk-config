@@ -169,11 +169,18 @@ static ssize_t write_bootloader(struct bt_conn *conn,
 // ============================================================================
 // Bootloader Control
 // ============================================================================
+static bool bootloader_intentional = false;  // Flag để phân biệt intentional vs accidental
 
 static void enter_bootloader_mode(void) {
+
+    if (!bootloader_intentional) {
+        LOG_ERR("Bootloader trigger blocked - not intentional");
+        return;
+    }
     LOG_WRN("========================================");
     LOG_WRN("ENTERING BOOTLOADER VIA KEYMAP");
     LOG_WRN("========================================");
+    bootloader_intentional = false;  // Reset flag
     
     k_sleep(K_MSEC(100));
     
@@ -194,6 +201,7 @@ static void enter_bootloader_mode(void) {
             .timestamp = k_uptime_get()
         }
     );
+
 }
 
 static void reset_device(void) {
@@ -599,6 +607,7 @@ static ssize_t write_bootloader(struct bt_conn *conn,
     switch (cmd) {
         case CMD_ENTER_BOOTLOADER:
             LOG_WRN("⚠️  BOOTLOADER in 2s");
+            bootloader_intentional = true;// Set flag
             k_work_reschedule(&bootloader_work, K_MSEC(2000));
             break;
         case CMD_RESET_DEVICE:
