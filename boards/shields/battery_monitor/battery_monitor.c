@@ -692,7 +692,7 @@ static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_at
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
     }
 
-    const uint8_t *data = (const uint8_t *)buf);
+    const uint8_t *data = (const uint8_t *)buf;
     
     // Validate
     if (data[2] > 100 || data[3] > 100 || data[4] > 100) {
