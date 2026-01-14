@@ -184,25 +184,6 @@ static void enter_bootloader_mode(void) {
     
     k_sleep(K_MSEC(100));
 
-
-
-    extern int zmk_keymap_layer_default(void);
-    extern int zmk_keymap_positions_len(void);
-    
-    int layer_id = zmk_keymap_layer_default();
-    int num_positions = zmk_keymap_positions_len();
-    
-    LOG_ERR("========================================");
-    LOG_ERR("KEYMAP DEBUG INFO");
-    LOG_ERR("Default layer: %d", layer_id);
-    LOG_ERR("Total positions in keymap: %d", num_positions);
-    LOG_ERR("Bootloader virtual position: 99");
-    LOG_ERR("Position 99 valid: %s", num_positions > 99 ? "YES" : "NO");
-    LOG_ERR("========================================");
-    
-    // ... rest of init code
-
-
     
     raise_zmk_position_state_changed(
         (struct zmk_position_state_changed){

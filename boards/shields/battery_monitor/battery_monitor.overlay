@@ -16,26 +16,44 @@
         zmk,matrix_transform = &default_transform;
     };
 
-    /*
-     * Physical key for bond clearing
-     * P0.17 (D2) = Bond clear button (active low with pull-up)
-     */
-    kscan0: kscan {
-        compatible = "zmk,kscan-gpio-direct";
-        label = "KSCAN";
-        input-gpios = <&gpio0 17 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
-        debounce-period = <10>;
-    };
+   /*
+ * Matrix transform - 100 positions (0-99)
+ * Position 0: Physical button on P0.17
+ * Position 1-98: Virtual (unused)
+ * Position 99: Virtual bootloader trigger
+ */
+default_transform: keymap_transform_0 {
+    compatible = "zmk,matrix-transform";
+    columns = <100>;  // ⭐ THAY ĐỔI: 1 → 100
+    rows = <1>;
+    map = 
+        0 1 2 3 4 5 6 7 8 9
+        10 11 12 13 14 15 16 17 18 19
+        20 21 22 23 24 25 26 27 28 29
+        30 31 32 33 34 35 36 37 38 39
+        40 41 42 43 44 45 46 47 48 49
+        50 51 52 53 54 55 56 57 58 59
+        60 61 62 63 64 65 66 67 68 69
+        70 71 72 73 74 75 76 77 78 79
+        80 81 82 83 84 85 86 87 88 89
+        90 91 92 93 94 95 96 97 98 99
+    >;  // ⭐ THÊM MAP 0-99
+};
 
-    /*
-     * Matrix transform (1 key = bond clear button)
-     */
-    default_transform: keymap_transform_0 {
-        compatible = "zmk,matrix-transform";
-        columns = <1>;
-        rows = <1>;
-        map = <0>;
-    };
+/*
+ * Kscan - chỉ có 1 physical button nhưng khai báo 100 virtual positions
+ */
+kscan0: kscan {
+    compatible = "zmk,kscan-gpio-direct";
+    label = "KSCAN";
+    input-gpios = 
+        <&gpio0 17 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>  // Position 0 - physical
+        // Positions 1-99 không có GPIO (virtual)
+    ;
+    debounce-period = <10>;
+};
+
+
 
     /*
      * Battery voltage sensing using nice!nano built-in divider
