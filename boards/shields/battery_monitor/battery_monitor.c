@@ -853,32 +853,41 @@ ZMK_SUBSCRIPTION(battery_monitor, zmk_battery_state_changed);
 // Connection Management
 // ============================================================================
 
+// ============================================================================
+// Connection Management
+// ============================================================================
+
+// Callback for bt_foreach_bond
+static void bond_list_cb(const struct bt_bond_info *info, void *user_data) {
+    if (bond_count >= CONFIG_BT_MAX_PAIRED) {
+        return;
+    }
+    
+    memcpy(&bond_list[bond_count].addr, &info->addr, sizeof(bt_addr_le_t));
+    
+    // Check if connected
+    bond_list[bond_count].is_connected = false;
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            struct bt_conn_info conn_info;
+            bt_conn_get_info(active_conns[i], &conn_info);
+            if (bt_addr_le_eq(&conn_info.le.dst, &info->addr)) {
+                bond_list[bond_count].is_connected = true;
+                break;
+            }
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    bond_count++;
+}
+
 static void refresh_bond_list(void) {
     bond_count = 0;
     memset(bond_list, 0, sizeof(bond_list));
     
-    bt_foreach_bond(BT_ID_DEFAULT, [](const struct bt_bond_info *info, void *user_data) {
-        if (bond_count >= CONFIG_BT_MAX_PAIRED) return;
-        
-        memcpy(&bond_list[bond_count].addr, &info->addr, sizeof(bt_addr_le_t));
-        
-        // Check if connected
-        bond_list[bond_count].is_connected = false;
-        k_mutex_lock(&conn_mutex, K_FOREVER);
-        for (int i = 0; i < MAX_CONNECTIONS; i++) {
-            if (active_conns[i]) {
-                struct bt_conn_info conn_info;
-                bt_conn_get_info(active_conns[i], &conn_info);
-                if (bt_addr_le_eq(&conn_info.le.dst, &info->addr)) {
-                    bond_list[bond_count].is_connected = true;
-                    break;
-                }
-            }
-        }
-        k_mutex_unlock(&conn_mutex);
-        
-        bond_count++;
-    }, NULL);
+    bt_foreach_bond(BT_ID_DEFAULT, bond_list_cb, NULL);
     
     LOG_INF("Bond list refreshed: %d bonds", bond_count);
 }
