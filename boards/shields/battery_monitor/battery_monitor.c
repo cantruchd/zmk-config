@@ -889,14 +889,39 @@ static void bond_list_cb(const struct bt_bond_info *info, void *user_data) {
     bond_count++;
 }
 
+
 static void refresh_bond_list(void) {
+    // Save current aliases before refresh
+    char saved_aliases[CONFIG_BT_MAX_PAIRED][BOND_ALIAS_MAX_LEN];
+    bt_addr_le_t saved_addrs[CONFIG_BT_MAX_PAIRED];
+    
+    // Backup aliases
+    for (int i = 0; i < CONFIG_BT_MAX_PAIRED; i++) {
+        memcpy(saved_aliases[i], bond_list[i].alias, BOND_ALIAS_MAX_LEN);
+        memcpy(&saved_addrs[i], &bond_list[i].addr, sizeof(bt_addr_le_t));
+    }
+    
     bond_count = 0;
     memset(bond_list, 0, sizeof(bond_list));
     
     bt_foreach_bond(BT_ID_DEFAULT, bond_list_cb, NULL);
     
+    // Restore aliases by matching addresses
+    for (int i = 0; i < bond_count; i++) {
+        for (int j = 0; j < CONFIG_BT_MAX_PAIRED; j++) {
+            if (bt_addr_le_eq(&bond_list[i].addr, &saved_addrs[j])) {
+                if (saved_aliases[j][0] != '\0') {
+                    memcpy(bond_list[i].alias, saved_aliases[j], BOND_ALIAS_MAX_LEN);
+                    LOG_DBG("Restored alias for bond %d: '%s'", i, bond_list[i].alias);
+                }
+                break;
+            }
+        }
+    }
+    
     LOG_INF("Bond list refreshed: %d bonds", bond_count);
 }
+
 
 static void add_connection(struct bt_conn *conn) {
     k_mutex_lock(&conn_mutex, K_FOREVER);
