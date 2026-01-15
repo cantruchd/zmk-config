@@ -1354,10 +1354,10 @@ static int settings_set_bonds(const char *name, size_t len, settings_read_cb rea
     return -ENOENT;
 }
 
-SETTINGS_STATIC_HANDLER_DEFINE(bond_aliases, SETTINGS_NAME "/bonds", NULL, settings_set_bonds, NULL, NULL);
+SETTINGS_STATIC_HANDLER_DEFINE(bond_aliases, SETTINGS_NAME, NULL, settings_set_bonds, NULL, NULL);
 
 static int save_bond_aliases(void) {
-    int rc = settings_save_one(SETTINGS_NAME "/bonds/bonds", bond_list, sizeof(bond_list));
+    int rc = settings_save_one(SETTINGS_NAME "/bonds", bond_list, sizeof(bond_list));
     if (rc) {
         LOG_ERR("Failed to save bond aliases: %d", rc);
         return rc;
