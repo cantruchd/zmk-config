@@ -960,9 +960,40 @@ static void connected_cb(struct bt_conn *conn, uint8_t err) {
     
     add_connection(conn);
     refresh_bond_list();
+    
+    // Check nếu còn slot trống thì tiếp tục advertise
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    int active_count = 0;
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i] != NULL) {
+            active_count++;
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    LOG_INF("Active connections: %d/%d", active_count, MAX_CONNECTIONS);
+    
+    // Nếu chưa đầy thì restart advertising
+    if (active_count < MAX_CONNECTIONS) {
+        LOG_INF("Restarting advertising (slots available: %d)", MAX_CONNECTIONS - active_count);
+        
+        struct bt_le_adv_param adv_param = {
+            .id = BT_ID_DEFAULT,
+            .options = BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_ONE_TIME,
+            .interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
+            .interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
+        };
+        
+        int ret = bt_le_adv_start(&adv_param, NULL, 0, NULL, 0);
+        if (ret) {
+            LOG_ERR("Failed to restart advertising: %d", ret);
+        }
+    } else {
+        LOG_INF("All connection slots full - advertising stopped");
+    }
 }
 
-static void disconnected_cb(struct bt_conn *conn, uint8_t reason) {
+static void disconnected_cb(struct bt_conn *conn, uint8_t reason) {static void disconnected_cb(struct bt_conn *conn, uint8_t reason) {
     char addr[BT_ADDR_LE_STR_LEN];
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
     LOG_INF("Disconnected: %s (reason %u)", addr, reason);
@@ -970,20 +1001,20 @@ static void disconnected_cb(struct bt_conn *conn, uint8_t reason) {
     remove_connection(conn);
     refresh_bond_list();
     
-    // Check if should restart advertising
-    k_mutex_lock(&conn_mutex, K_FOREVER);
-    bool has_connections = false;
-    for (int i = 0; i < MAX_CONNECTIONS; i++) {
-        if (active_conns[i] != NULL) {
-            has_connections = true;
-            break;
-        }
-    }
-    k_mutex_unlock(&conn_mutex);
+    // ALWAYS restart advertising để accept connections mới
+    // Không cần check has_connections vì multi-connection cần luôn sẵn sàng
+    LOG_INF("Restarting advertising for new connections");
     
-    if (!has_connections) {
-        LOG_INF("No active connections, restarting advertising");
-        bt_le_adv_start(BT_LE_ADV_CONN, NULL, 0, NULL, 0);
+    struct bt_le_adv_param adv_param = {
+        .id = BT_ID_DEFAULT,
+        .options = BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_ONE_TIME,
+        .interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
+        .interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
+    };
+    
+    int ret = bt_le_adv_start(&adv_param, NULL, 0, NULL, 0);
+    if (ret) {
+        LOG_ERR("Failed to restart advertising: %d", ret);
     }
 }
 
@@ -1570,7 +1601,24 @@ static int battery_monitor_init(void) {
             temp_settings.ext_low_threshold / 100,
             abs(temp_settings.ext_low_threshold % 100));
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
+    // Start advertising on boot
+    struct bt_le_adv_param adv_param = {
+        .id = BT_ID_DEFAULT,
+        .options = BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_ONE_TIME,
+        .interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
+        .interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
+    };
+    
+    ret = bt_le_adv_start(&adv_param, NULL, 0, NULL, 0);
+    if (ret) {
+        LOG_ERR("Failed to start advertising: %d", ret);
+    } else {
+        LOG_INF("✅ Advertising started - accepting connections");
+    }
+    
+   
     return 0;
 }
 
