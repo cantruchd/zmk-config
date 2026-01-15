@@ -1362,7 +1362,7 @@ static int save_bond_aliases(void) {
         LOG_ERR("Failed to save bond aliases: %d", rc);
         return rc;
     }
-    LOG_INF("Bond aliases saved to NVS");
+    LOG_INF("Bond aliases saved to NVS with aliases %s", bond_list[0].alias);
     return 0;
 }
 
