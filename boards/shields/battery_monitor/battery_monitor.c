@@ -272,6 +272,12 @@ static ssize_t read_temp_settings(struct bt_conn *conn, const struct bt_gatt_att
 static ssize_t write_temp_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                     const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
 
+// THÊM 2 DÒNG NÀY:
+static ssize_t read_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                     void *buf, uint16_t len, uint16_t offset);
+static ssize_t write_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                      const void *buf, uint16_t len, uint16_t offset, uint8_t flags);                                    
+
 // ============================================================================
 // Settings Management (using Zephyr Settings API like ZMK Studio)
 // ============================================================================
@@ -872,7 +878,7 @@ static void bond_list_cb(const struct bt_bond_info *info, void *user_data) {
         if (active_conns[i]) {
             struct bt_conn_info conn_info;
             bt_conn_get_info(active_conns[i], &conn_info);
-            if (bt_addr_le_eq(&conn_info.le.dst, &info->addr)) {
+            if (bt_addr_le_eq(conn_info.le.dst, &info->addr)) {
                 bond_list[bond_count].is_connected = true;
                 break;
             }
