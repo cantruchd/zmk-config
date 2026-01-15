@@ -71,6 +71,11 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // Settings key (stored as "btmon/cfg" in NVS)
 #define SETTINGS_NAME "btmon"
 
+
+// Connection management
+#define MAX_CONNECTIONS 4
+#define BOND_ALIAS_MAX_LEN 32
+
 // ============================================================================
 // BLE UUIDs
 // ============================================================================
@@ -115,12 +120,26 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define BT_UUID_TEMP_SETTINGS \
     BT_UUID_DECLARE_128(BT_UUID_TEMP_SETTINGS_VAL)
 
+
+#define BT_UUID_BOND_MANAGEMENT_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef8)
+#define BT_UUID_BOND_MANAGEMENT \
+    BT_UUID_DECLARE_128(BT_UUID_BOND_MANAGEMENT_VAL)
+
 // Commands
 #define CMD_POWER_OFF    0x00
 #define CMD_POWER_ON     0x01
 #define CMD_POWER_TOGGLE 0x02
 #define CMD_ENTER_BOOTLOADER 0x42
 #define CMD_RESET_DEVICE     0x52
+
+
+
+
+
+
+
+
 
 // ============================================================================
 // ADC Configuration
@@ -603,7 +622,17 @@ static void set_power_state(bool on) {
     LOG_INF("Battery power %s", on ? "ON" : "OFF");
     
     uint8_t status = power_state ? 0x01 : 0x00;
-    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[2], &status, sizeof(status));
+    //bt_gatt_notify(NULL, &battery_monitor_svc.attrs[2], &status, sizeof(status));
+
+
+        // Notify all active connections
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[2], &status, sizeof(status));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
 }
 
 void battery_monitor_power_on(void) { set_power_state(true); }
@@ -723,9 +752,23 @@ static void update_all_sensors(void) {
     // Check temperature protection
     check_temp_protection();
     
-    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], &temp_internal, sizeof(temp_internal));
-    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], &current_voltage_mv, sizeof(current_voltage_mv));
-    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[11], &temp_external, sizeof(temp_external));
+    // bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], &temp_internal, sizeof(temp_internal));
+    // bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], &current_voltage_mv, sizeof(current_voltage_mv));
+    // bt_gatt_notify(NULL, &battery_monitor_svc.attrs[11], &temp_external, sizeof(temp_external));
+
+    // Notify all active connections
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            // bt_gatt_notify(active_conns[i], attr, data, len);
+            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[5], &temp_internal, sizeof(temp_internal));
+            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[8], &current_voltage_mv, sizeof(current_voltage_mv));
+            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[11], &temp_external, sizeof(temp_external));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+
+
 }
 
 static void update_work_handler(struct k_work *work) {
@@ -782,6 +825,115 @@ static int battery_level_listener(const zmk_event_t *eh) {
 
 ZMK_LISTENER(battery_monitor, battery_level_listener);
 ZMK_SUBSCRIPTION(battery_monitor, zmk_battery_state_changed);
+
+
+// ===========================================================================
+// multibond
+// ==========================================================================
+// ============================================================================
+// Connection Management
+// ============================================================================
+
+static void refresh_bond_list(void) {
+    bond_count = 0;
+    memset(bond_list, 0, sizeof(bond_list));
+    
+    bt_foreach_bond(BT_ID_DEFAULT, [](const struct bt_bond_info *info, void *user_data) {
+        if (bond_count >= CONFIG_BT_MAX_PAIRED) return;
+        
+        memcpy(&bond_list[bond_count].addr, &info->addr, sizeof(bt_addr_le_t));
+        
+        // Check if connected
+        bond_list[bond_count].is_connected = false;
+        k_mutex_lock(&conn_mutex, K_FOREVER);
+        for (int i = 0; i < MAX_CONNECTIONS; i++) {
+            if (active_conns[i]) {
+                struct bt_conn_info conn_info;
+                bt_conn_get_info(active_conns[i], &conn_info);
+                if (bt_addr_le_eq(&conn_info.le.dst, &info->addr)) {
+                    bond_list[bond_count].is_connected = true;
+                    break;
+                }
+            }
+        }
+        k_mutex_unlock(&conn_mutex);
+        
+        bond_count++;
+    }, NULL);
+    
+    LOG_INF("Bond list refreshed: %d bonds", bond_count);
+}
+
+static void add_connection(struct bt_conn *conn) {
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i] == NULL) {
+            active_conns[i] = bt_conn_ref(conn);
+            LOG_INF("Connection added at slot %d", i);
+            break;
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+}
+
+static void remove_connection(struct bt_conn *conn) {
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i] == conn) {
+            bt_conn_unref(active_conns[i]);
+            active_conns[i] = NULL;
+            LOG_INF("Connection removed from slot %d", i);
+            break;
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+}
+
+static void connected_cb(struct bt_conn *conn, uint8_t err) {
+    if (err) {
+        LOG_ERR("Connection failed: %u", err);
+        return;
+    }
+    
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_INF("Connected: %s", addr);
+    
+    add_connection(conn);
+    refresh_bond_list();
+}
+
+static void disconnected_cb(struct bt_conn *conn, uint8_t reason) {
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_INF("Disconnected: %s (reason %u)", addr, reason);
+    
+    remove_connection(conn);
+    refresh_bond_list();
+    
+    // Check if should restart advertising
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    bool has_connections = false;
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i] != NULL) {
+            has_connections = true;
+            break;
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    if (!has_connections) {
+        LOG_INF("No active connections, restarting advertising");
+        bt_le_adv_start(BT_LE_ADV_CONN, NULL, 0, NULL, 0);
+    }
+}
+
+BT_CONN_CB_DEFINE(conn_callbacks) = {
+    .connected = connected_cb,
+    .disconnected = disconnected_cb,
+};
+
+
 
 // ============================================================================
 // BLE GATT Handlers
@@ -976,7 +1128,16 @@ static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_at
     notify_data[7] = auto_settings.reverse_on_enabled ? 0x01 : 0x00;
     notify_data[8] = auto_settings.reverse_on_percent;
     notify_data[9] = 0x00;
-    bt_gatt_notify(NULL, attr, notify_data, sizeof(notify_data));
+    // bt_gatt_notify(NULL, attr, notify_data, sizeof(notify_data));
+
+    // Notify all active connections
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {            
+            bt_gatt_notify(active_conns[i], attr, notify_data, sizeof(notify_data));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
     
     // Apply immediately
     check_auto_mosfet(last_battery_percent);
@@ -1060,8 +1221,17 @@ static ssize_t write_temp_settings(struct bt_conn *conn, const struct bt_gatt_at
     }
     
     // Notify
-    bt_gatt_notify(NULL, attr, data, 12);
-    
+    // bt_gatt_notify(NULL, attr, data, 12);
+
+    // Notify all active connections
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            bt_gatt_notify(active_conns[i], attr, data, 12);
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+
     // Apply immediately
     check_temp_protection();
     
@@ -1115,7 +1285,143 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
                           BT_GATT_CHRC_WRITE,
                           BT_GATT_PERM_WRITE,
                           NULL, write_bootloader, NULL),
+
+    BT_GATT_CHARACTERISTIC(BT_UUID_BOND_MANAGEMENT,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                          read_bond_management, write_bond_management, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 );
+
+
+
+// ============================================================================
+// Multi bonds
+// ============================================================================
+struct bond_info {
+    bt_addr_le_t addr;
+    char alias[BOND_ALIAS_MAX_LEN];
+    bool is_connected;
+};
+
+struct bond_management_data {
+    uint8_t cmd;           // 0x01=list, 0x02=set_alias, 0x03=delete
+    uint8_t bond_index;    // Index của bond
+    char alias[BOND_ALIAS_MAX_LEN];
+} __packed;
+
+static struct bt_conn *active_conns[MAX_CONNECTIONS];
+static struct bond_info bond_list[CONFIG_BT_MAX_PAIRED];
+static uint8_t bond_count = 0;
+static K_MUTEX_DEFINE(conn_mutex);
+
+static int settings_set_bonds(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
+    const char *next;
+    
+    if (settings_name_steq(name, "bonds", &next) && !next) {
+        if (len > sizeof(bond_list)) {
+            return -EINVAL;
+        }
+        
+        if (read_cb(cb_arg, bond_list, len) != len) {
+            return -EINVAL;
+        }
+        
+        LOG_INF("Bond aliases loaded from NVS");
+        return 0;
+    }
+    
+    return -ENOENT;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(bond_aliases, SETTINGS_NAME "/bonds", NULL, settings_set_bonds, NULL, NULL);
+
+static int save_bond_aliases(void) {
+    int rc = settings_save_one(SETTINGS_NAME "/bonds/bonds", bond_list, sizeof(bond_list));
+    if (rc) {
+        LOG_ERR("Failed to save bond aliases: %d", rc);
+        return rc;
+    }
+    LOG_INF("Bond aliases saved to NVS");
+    return 0;
+}
+
+static ssize_t read_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                     void *buf, uint16_t len, uint16_t offset) {
+    refresh_bond_list();
+    
+    // Format: [count][bond0_data][bond1_data]...
+    // Each bond: [addr:7][alias:32][is_connected:1] = 40 bytes
+    uint8_t data[1 + (40 * CONFIG_BT_MAX_PAIRED)];
+    data[0] = bond_count;
+    
+    for (int i = 0; i < bond_count; i++) {
+        uint8_t *bond_data = &data[1 + (i * 40)];
+        memcpy(bond_data, &bond_list[i].addr, 7);
+        memcpy(bond_data + 7, bond_list[i].alias, BOND_ALIAS_MAX_LEN);
+        bond_data[39] = bond_list[i].is_connected ? 0x01 : 0x00;
+    }
+    
+    LOG_INF("Bond list read: %d bonds", bond_count);
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, data, 1 + (bond_count * 40));
+}
+
+static ssize_t write_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                      const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    if (len < 2) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+    
+    const struct bond_management_data *cmd = (const struct bond_management_data *)buf;
+    
+    refresh_bond_list();
+    
+    switch (cmd->cmd) {
+        case 0x01: // List bonds (already done in read)
+            LOG_INF("List bonds command");
+            break;
+            
+        case 0x02: // Set alias
+            if (cmd->bond_index >= bond_count) {
+                LOG_ERR("Invalid bond index: %d", cmd->bond_index);
+                return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+            }
+            
+            memcpy(bond_list[cmd->bond_index].alias, cmd->alias, BOND_ALIAS_MAX_LEN);
+            bond_list[cmd->bond_index].alias[BOND_ALIAS_MAX_LEN - 1] = '\0';
+            
+            LOG_INF("Set alias for bond %d: %s", cmd->bond_index, bond_list[cmd->bond_index].alias);
+            save_bond_aliases();
+            break;
+            
+        case 0x03: // Delete bond
+            if (cmd->bond_index >= bond_count) {
+                LOG_ERR("Invalid bond index: %d", cmd->bond_index);
+                return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+            }
+            
+            if (bond_list[cmd->bond_index].is_connected) {
+                LOG_ERR("Cannot delete active bond");
+                return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+            }
+            
+            LOG_WRN("Deleting bond %d", cmd->bond_index);
+            bt_unpair(BT_ID_DEFAULT, &bond_list[cmd->bond_index].addr);
+            refresh_bond_list();
+            save_bond_aliases();
+            break;
+            
+        default:
+            LOG_ERR("Unknown command: 0x%02X", cmd->cmd);
+            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    return len;
+}
+
+
+
+
 
 // ============================================================================
 // Initialization
@@ -1170,6 +1476,17 @@ static int battery_monitor_init(void) {
     
     k_work_init_delayable(&update_work, update_work_handler);
     k_work_init_delayable(&bootloader_work, bootloader_work_handler);
+
+
+    // Initialize connection array
+    memset(active_conns, 0, sizeof(active_conns));
+    refresh_bond_list();
+    
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    LOG_INF("📡 CONNECTION MANAGEMENT:");
+    LOG_INF("  Max connections: %d", MAX_CONNECTIONS);
+    LOG_INF("  Bonded devices: %d", bond_count);
+    LOG_INF("  Multi-connection: ENABLED");
     
     LOG_INF("✅ Battery Monitor initialized");
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

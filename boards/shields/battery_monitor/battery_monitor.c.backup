@@ -1,6 +1,7 @@
+
 /*
  * battery_monitor.c
- * Custom battery monitoring with Auto MOSFET control + Temperature Protection
+ * Custom battery monitoring with Auto MOSFET control + Temperature Protection + Reverse Control
  * 
  * Settings storage: Uses Zephyr Settings API directly (ZMK core already enables NVS)
  * No need to add CONFIG_SETTINGS or CONFIG_NVS - already in ZMK core!
@@ -49,6 +50,10 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define DEFAULT_AUTO_ON_PERCENT   30
 #define DEFAULT_AUTO_OFF_PERCENT  80
 #define DEFAULT_STORAGE_PERCENT   40
+#define DEFAULT_REVERSE_OFF_ENABLE false
+#define DEFAULT_REVERSE_OFF_PERCENT 25
+#define DEFAULT_REVERSE_ON_ENABLE  false
+#define DEFAULT_REVERSE_ON_PERCENT 60
 
 // Defaults - Temperature (in hundredths of degree Celsius)
 #define DEFAULT_TEMP_INT_HIGH_ENABLE   false
@@ -143,6 +148,11 @@ struct auto_mosfet_settings {
     uint8_t auto_on_percent;
     uint8_t auto_off_percent;
     uint8_t storage_percent;
+    // Reverse settings
+    bool reverse_off_enabled;
+    uint8_t reverse_off_percent;
+    bool reverse_on_enabled;
+    uint8_t reverse_on_percent;
 };
 
 struct temp_protection_settings {
@@ -183,6 +193,10 @@ static struct auto_mosfet_settings auto_settings = {
     .auto_on_percent = DEFAULT_AUTO_ON_PERCENT,
     .auto_off_percent = DEFAULT_AUTO_OFF_PERCENT,
     .storage_percent = DEFAULT_STORAGE_PERCENT,
+    .reverse_off_enabled = DEFAULT_REVERSE_OFF_ENABLE,
+    .reverse_off_percent = DEFAULT_REVERSE_OFF_PERCENT,
+    .reverse_on_enabled = DEFAULT_REVERSE_ON_ENABLE,
+    .reverse_on_percent = DEFAULT_REVERSE_ON_PERCENT,
 };
 
 static struct temp_protection_settings temp_settings = {
@@ -229,11 +243,11 @@ static int settings_set(const char *name, size_t len, settings_read_cb read_cb, 
     
     // Battery settings
     if (settings_name_steq(name, "cfg", &next) && !next) {
-        if (len != 5) {
+        if (len != 9) {
             return -EINVAL;
         }
         
-        uint8_t data[5];
+        uint8_t data[9];
         if (read_cb(cb_arg, data, sizeof(data)) != sizeof(data)) {
             return -EINVAL;
         }
@@ -243,6 +257,10 @@ static int settings_set(const char *name, size_t len, settings_read_cb read_cb, 
         auto_settings.auto_on_percent = data[2];
         auto_settings.auto_off_percent = data[3];
         auto_settings.storage_percent = data[4];
+        auto_settings.reverse_off_enabled = (data[5] != 0);
+        auto_settings.reverse_off_percent = data[6];
+        auto_settings.reverse_on_enabled = (data[7] != 0);
+        auto_settings.reverse_on_percent = data[8];
         
         LOG_INF("Battery settings loaded from NVS:");
         LOG_INF("  Auto ON: %s at <%d%%", 
@@ -252,6 +270,12 @@ static int settings_set(const char *name, size_t len, settings_read_cb read_cb, 
                 auto_settings.auto_off_enabled ? "ENABLED" : "DISABLED",
                 auto_settings.auto_off_percent);
         LOG_INF("  Storage: %d%%", auto_settings.storage_percent);
+        LOG_INF("  Reverse OFF: %s at <%d%%", 
+                auto_settings.reverse_off_enabled ? "ENABLED" : "DISABLED",
+                auto_settings.reverse_off_percent);
+        LOG_INF("  Reverse ON: %s at >%d%%", 
+                auto_settings.reverse_on_enabled ? "ENABLED" : "DISABLED",
+                auto_settings.reverse_on_percent);
         
         return 0;
     }
@@ -303,12 +327,16 @@ static int settings_set(const char *name, size_t len, settings_read_cb read_cb, 
 SETTINGS_STATIC_HANDLER_DEFINE(battery_monitor, SETTINGS_NAME, NULL, settings_set, NULL, NULL);
 
 static int save_battery_settings(void) {
-    uint8_t data[5];
+    uint8_t data[9];
     data[0] = auto_settings.auto_on_enabled ? 1 : 0;
     data[1] = auto_settings.auto_off_enabled ? 1 : 0;
     data[2] = auto_settings.auto_on_percent;
     data[3] = auto_settings.auto_off_percent;
     data[4] = auto_settings.storage_percent;
+    data[5] = auto_settings.reverse_off_enabled ? 1 : 0;
+    data[6] = auto_settings.reverse_off_percent;
+    data[7] = auto_settings.reverse_on_enabled ? 1 : 0;
+    data[8] = auto_settings.reverse_on_percent;
     
     int rc = settings_save_one(SETTINGS_NAME "/cfg", data, sizeof(data));
     if (rc) {
@@ -655,6 +683,24 @@ static void check_auto_mosfet(uint8_t percent) {
             set_power_state(false);
         }
     }
+    
+    // Check REVERSE OFF (turn off when battery drops below threshold)
+    if (auto_settings.reverse_off_enabled) {
+        if (percent < auto_settings.reverse_off_percent && power_state) {
+            LOG_WRN("🔋 REVERSE OFF: Battery %d%% < %d%% - Disabling MOSFET", 
+                    percent, auto_settings.reverse_off_percent);
+            set_power_state(false);
+        }
+    }
+    
+    // Check REVERSE ON (turn on when battery rises above threshold)
+    if (auto_settings.reverse_on_enabled) {
+        if (percent > auto_settings.reverse_on_percent && !power_state) {
+            LOG_INF("🔌 REVERSE ON: Battery %d%% > %d%% - Enabling MOSFET", 
+                    percent, auto_settings.reverse_on_percent);
+            set_power_state(true);
+        }
+    }
 }
 
 // ============================================================================
@@ -841,31 +887,36 @@ static ssize_t write_bootloader(struct bt_conn *conn, const struct bt_gatt_attr 
 
 static ssize_t read_auto_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                    void *buf, uint16_t len, uint16_t offset) {
-    uint8_t data[6] = {
+    uint8_t data[10] = {
         auto_settings.auto_on_enabled ? 0x01 : 0x00,
         auto_settings.auto_off_enabled ? 0x01 : 0x00,
         auto_settings.auto_on_percent,
         auto_settings.auto_off_percent,
         auto_settings.storage_percent,
+        auto_settings.reverse_off_enabled ? 0x01 : 0x00,
+        auto_settings.reverse_off_percent,
+        auto_settings.reverse_on_enabled ? 0x01 : 0x00,
+        auto_settings.reverse_on_percent,
         0x00
     };
     
-    LOG_INF("Read auto settings: ON_EN=%d, OFF_EN=%d, ON<%d%%, OFF>%d%%, STOR=%d%%",
-            data[0], data[1], data[2], data[3], data[4]);
+    LOG_INF("Read auto settings: ON_EN=%d, OFF_EN=%d, ON<%d%%, OFF>%d%%, STOR=%d%%, REV_OFF_EN=%d, REV_OFF<%d%%, REV_ON_EN=%d, REV_ON>%d%%",
+            data[0], data[1], data[2], data[3], data[4], data[5], data[6], data[7], data[8]);
     
     return bt_gatt_attr_read(conn, attr, buf, len, offset, data, sizeof(data));
 }
 
 static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                     const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
-    if (offset + len > 6) {
+    if (offset + len > 10) {
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
     }
 
     const uint8_t *data = (const uint8_t *)buf;
     
     // Validate
-    if (data[2] > 100 || data[3] > 100 || data[4] > 100) {
+    if (data[2] > 100 || data[3] > 100 || data[4] > 100 || 
+        data[6] > 100 || data[8] > 100) {
         LOG_ERR("Invalid percentage values");
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
@@ -875,12 +926,21 @@ static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_at
         return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
     
+    if (data[6] >= data[8]) {
+        LOG_ERR("reverse_off must be < reverse_on");
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
     // Update
     auto_settings.auto_on_enabled = (data[0] != 0);
     auto_settings.auto_off_enabled = (data[1] != 0);
     auto_settings.auto_on_percent = data[2];
     auto_settings.auto_off_percent = data[3];
     auto_settings.storage_percent = data[4];
+    auto_settings.reverse_off_enabled = (data[5] != 0);
+    auto_settings.reverse_off_percent = data[6];
+    auto_settings.reverse_on_enabled = (data[7] != 0);
+    auto_settings.reverse_on_percent = data[8];
     
     LOG_WRN("⚙️  Auto settings updated:");
     LOG_WRN("   Auto ON: %s at <%d%%", 
@@ -890,6 +950,12 @@ static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_at
             auto_settings.auto_off_enabled ? "ENABLED" : "DISABLED",
             auto_settings.auto_off_percent);
     LOG_WRN("   Storage: %d%%", auto_settings.storage_percent);
+    LOG_WRN("   Reverse OFF: %s at <%d%%", 
+            auto_settings.reverse_off_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.reverse_off_percent);
+    LOG_WRN("   Reverse ON: %s at >%d%%", 
+            auto_settings.reverse_on_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.reverse_on_percent);
     
     // Save to NVS
     int rc = save_battery_settings();
@@ -899,13 +965,17 @@ static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_at
     }
     
     // Notify
-    uint8_t notify_data[6];
+    uint8_t notify_data[10];
     notify_data[0] = auto_settings.auto_on_enabled ? 0x01 : 0x00;
     notify_data[1] = auto_settings.auto_off_enabled ? 0x01 : 0x00;
     notify_data[2] = auto_settings.auto_on_percent;
     notify_data[3] = auto_settings.auto_off_percent;
     notify_data[4] = auto_settings.storage_percent;
-    notify_data[5] = 0x00;
+    notify_data[5] = auto_settings.reverse_off_enabled ? 0x01 : 0x00;
+    notify_data[6] = auto_settings.reverse_off_percent;
+    notify_data[7] = auto_settings.reverse_on_enabled ? 0x01 : 0x00;
+    notify_data[8] = auto_settings.reverse_on_percent;
+    notify_data[9] = 0x00;
     bt_gatt_notify(NULL, attr, notify_data, sizeof(notify_data));
     
     // Apply immediately
