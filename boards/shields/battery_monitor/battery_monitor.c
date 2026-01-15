@@ -137,6 +137,25 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 
 
+// ============================================================================
+// Multi bonds
+// ============================================================================
+struct bond_info {
+    bt_addr_le_t addr;
+    char alias[BOND_ALIAS_MAX_LEN];
+    bool is_connected;
+};
+
+struct bond_management_data {
+    uint8_t cmd;           // 0x01=list, 0x02=set_alias, 0x03=delete
+    uint8_t bond_index;    // Index của bond
+    char alias[BOND_ALIAS_MAX_LEN];
+} __packed;
+
+static struct bt_conn *active_conns[MAX_CONNECTIONS];
+static struct bond_info bond_list[CONFIG_BT_MAX_PAIRED];
+static uint8_t bond_count = 0;
+static K_MUTEX_DEFINE(conn_mutex);
 
 
 
@@ -1295,25 +1314,11 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
 
 
 
-// ============================================================================
-// Multi bonds
-// ============================================================================
-struct bond_info {
-    bt_addr_le_t addr;
-    char alias[BOND_ALIAS_MAX_LEN];
-    bool is_connected;
-};
 
-struct bond_management_data {
-    uint8_t cmd;           // 0x01=list, 0x02=set_alias, 0x03=delete
-    uint8_t bond_index;    // Index của bond
-    char alias[BOND_ALIAS_MAX_LEN];
-} __packed;
 
-static struct bt_conn *active_conns[MAX_CONNECTIONS];
-static struct bond_info bond_list[CONFIG_BT_MAX_PAIRED];
-static uint8_t bond_count = 0;
-static K_MUTEX_DEFINE(conn_mutex);
+// ============================================================================
+// MULTI BOND STORAGE
+// ============================================================================
 
 static int settings_set_bonds(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
     const char *next;
