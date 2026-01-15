@@ -1382,7 +1382,7 @@ static ssize_t read_bond_management(struct bt_conn *conn, const struct bt_gatt_a
         bond_data[39] = bond_list[i].is_connected ? 0x01 : 0x00;
     }
     
-    LOG_INF("Bond list read: %d bonds", bond_count);
+    LOG_INF("Bond list read: %d bonds WITH ALIAS %s", bond_count, bond_list[0].alias);
     return bt_gatt_attr_read(conn, attr, buf, len, offset, data, 1 + (bond_count * 40));
 }
 
