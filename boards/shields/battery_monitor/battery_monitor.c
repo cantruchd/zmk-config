@@ -1466,11 +1466,7 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
     }
 }
 
-static struct bt_conn_auth_cb auth_callbacks = {
-    .pairing_accept = pairing_accept,
-    .pairing_complete = pairing_complete,
-    .pairing_failed = pairing_failed,
-};
+
 
 static int settings_set_bonds(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
     const char *next;
