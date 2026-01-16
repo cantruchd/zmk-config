@@ -277,7 +277,9 @@ static ssize_t write_temp_settings(struct bt_conn *conn, const struct bt_gatt_at
 static ssize_t read_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                      void *buf, uint16_t len, uint16_t offset);
 static ssize_t write_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                      const void *buf, uint16_t len, uint16_t offset, uint8_t flags);                                    
+                                      const void *buf, uint16_t len, uint16_t offset, uint8_t flags);     
+                                      
+static void switch_to_next_available_profile(void);
 
 // ============================================================================
 // Settings Management (using Zephyr Settings API like ZMK Studio)
