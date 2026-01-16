@@ -1396,6 +1396,14 @@ static int save_bond_aliases(void);
 // Pairing Management for Multi-Connection
 // ============================================================================
 
+// ============================================================================
+// Pairing Management for Multi-Connection
+// ============================================================================
+
+// Forward declaration of ZMK's pairing accept function
+extern enum bt_security_err zmk_ble_auth_pairing_accept(struct bt_conn *conn,
+                                                         const struct bt_conn_pairing_feat *const feat);
+
 static enum bt_security_err pairing_accept(struct bt_conn *conn,
                                            const struct bt_conn_pairing_feat *const feat) {
     // Check if we have available slots
@@ -1408,31 +1416,38 @@ static enum bt_security_err pairing_accept(struct bt_conn *conn,
     }
     k_mutex_unlock(&conn_mutex);
     
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    
     if (active_count >= MAX_CONNECTIONS) {
-        LOG_ERR("Cannot pair: All connection slots full (%d/%d)", 
+        LOG_ERR("❌ Cannot pair: All connection slots full (%d/%d)", 
                 active_count, MAX_CONNECTIONS);
         return BT_SECURITY_ERR_PAIR_NOT_ALLOWED;
     }
     
     // Check if device is already bonded
-    char addr[BT_ADDR_LE_STR_LEN];
-    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-    
     const bt_addr_le_t *conn_addr = bt_conn_get_dst(conn);
     bool already_bonded = false;
     
     for (int i = 0; i < bond_count; i++) {
         if (bt_addr_le_eq(&bond_list[i].addr, conn_addr)) {
             already_bonded = true;
-            LOG_INF("Device %s already bonded - accepting", addr);
-            break;
+            LOG_INF("✅ Device %s already bonded - accepting pairing", addr);
+            return BT_SECURITY_ERR_SUCCESS;
         }
     }
     
-    if (!already_bonded) {
-        LOG_INF("New device %s requesting pairing - accepting", addr);
+    // New device - check if we can bond more devices
+    if (bond_count >= CONFIG_BT_MAX_PAIRED) {
+        LOG_ERR("❌ Cannot pair: Max bonds reached (%d/%d)", 
+                bond_count, CONFIG_BT_MAX_PAIRED);
+        return BT_SECURITY_ERR_PAIR_NOT_ALLOWED;
     }
     
+    LOG_INF("🆕 New device %s requesting pairing - FORCING ACCEPT", addr);
+    
+    // CRITICAL: Return SUCCESS to override ZMK's profile check
+    // This allows pairing even if ZMK thinks profile is "taken"
     return BT_SECURITY_ERR_SUCCESS;
 }
 
