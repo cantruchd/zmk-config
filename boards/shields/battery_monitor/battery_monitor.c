@@ -957,12 +957,11 @@ static void connected_cb(struct bt_conn *conn, uint8_t err) {
     
     char addr[BT_ADDR_LE_STR_LEN];
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-    LOG_INF("Connected: %s", addr);
+    LOG_INF("✅ Connected: %s", addr);
     
     add_connection(conn);
     refresh_bond_list();
     
-    // Check nếu còn slot trống thì tiếp tục advertise
     k_mutex_lock(&conn_mutex, K_FOREVER);
     int active_count = 0;
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
@@ -972,27 +971,27 @@ static void connected_cb(struct bt_conn *conn, uint8_t err) {
     }
     k_mutex_unlock(&conn_mutex);
     
-    LOG_INF("Active connections: %d/%d", active_count, MAX_CONNECTIONS);
-
-    // ZMK handles advertising automatically - no manual control needed
-    if (active_count >= MAX_CONNECTIONS) {
-        LOG_INF("All connection slots full");
-    } else {
-        LOG_DBG("Slots available: %d - ZMK will continue advertising", MAX_CONNECTIONS - active_count);
-    }
-    
-    
+    LOG_INF("📊 Active connections: %d/%d (Profile: %d)", 
+            active_count, MAX_CONNECTIONS, zmk_ble_active_profile_index());
 }
 
 static void disconnected_cb(struct bt_conn *conn, uint8_t reason) {
     char addr[BT_ADDR_LE_STR_LEN];
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-    LOG_INF("Disconnected: %s (reason %u)", addr, reason);
+    
+    const char *reason_str;
+    switch (reason) {
+        case 0x13: reason_str = "Remote user terminated"; break;
+        case 0x16: reason_str = "Local host terminated"; break;
+        case 0x08: reason_str = "Connection timeout"; break;
+        default: reason_str = "Unknown"; break;
+    }
+    
+    LOG_INF("🔌 Disconnected: %s (0x%02X: %s)", addr, reason, reason_str);
     
     remove_connection(conn);
     refresh_bond_list();
     
-    // Log connection status
     k_mutex_lock(&conn_mutex, K_FOREVER);
     int active_count = 0;
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
@@ -1002,15 +1001,18 @@ static void disconnected_cb(struct bt_conn *conn, uint8_t reason) {
     }
     k_mutex_unlock(&conn_mutex);
     
-    LOG_INF("Connections after disconnect: %d/%d", active_count, MAX_CONNECTIONS);
+    LOG_INF("📊 Connections after disconnect: %d/%d", active_count, MAX_CONNECTIONS);
     
-    // ZMK will automatically restart advertising when slots are available
+    // Auto-switch to next available profile if no connections
+    if (active_count == 0) {
+        LOG_INF("🔄 No active connections - switching to next profile");
+        switch_to_next_available_profile();
+    }
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
     .connected = connected_cb,
     .disconnected = disconnected_cb,
-    .security_changed = security_changed,  // ← THÊM DÒNG NÀY
 };
 
 
@@ -1400,62 +1402,7 @@ static int save_bond_aliases(void);
 // Pairing Management for Multi-Connection
 // ============================================================================
 
-// Forward declaration of ZMK's pairing accept function
-extern enum bt_security_err zmk_ble_auth_pairing_accept(struct bt_conn *conn,
-                                                         const struct bt_conn_pairing_feat *const feat);
 
-static enum bt_security_err pairing_accept(struct bt_conn *conn,
-                                           const struct bt_conn_pairing_feat *const feat) {
-    // Check if we have available slots
-    k_mutex_lock(&conn_mutex, K_FOREVER);
-    int active_count = 0;
-    for (int i = 0; i < MAX_CONNECTIONS; i++) {
-        if (active_conns[i] != NULL) {
-            active_count++;
-        }
-    }
-    k_mutex_unlock(&conn_mutex);
-    
-    char addr[BT_ADDR_LE_STR_LEN];
-    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-    
-    if (active_count >= MAX_CONNECTIONS) {
-        LOG_ERR("❌ Cannot pair: All connection slots full (%d/%d)", 
-                active_count, MAX_CONNECTIONS);
-        return BT_SECURITY_ERR_PAIR_NOT_ALLOWED;
-    }
-    
-    // Check if device is already bonded
-    const bt_addr_le_t *conn_addr = bt_conn_get_dst(conn);
-    bool already_bonded = false;
-    
-    for (int i = 0; i < bond_count; i++) {
-        if (bt_addr_le_eq(&bond_list[i].addr, conn_addr)) {
-            already_bonded = true;
-            LOG_INF("✅ Device %s already bonded - accepting pairing", addr);
-            return BT_SECURITY_ERR_SUCCESS;
-        }
-    }
-    
-    // New device - check if we can bond more devices
-    if (bond_count >= CONFIG_BT_MAX_PAIRED) {
-        LOG_ERR("❌ Cannot pair: Max bonds reached (%d/%d)", 
-                bond_count, CONFIG_BT_MAX_PAIRED);
-        return BT_SECURITY_ERR_PAIR_NOT_ALLOWED;
-    }
-    
-    LOG_INF("🆕 New device %s requesting pairing - FORCING ACCEPT", addr);
-    
-    // CRITICAL: Return SUCCESS to override ZMK's profile check
-    // This allows pairing even if ZMK thinks profile is "taken"
-    return BT_SECURITY_ERR_SUCCESS;
-}
-
-static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason) {
-    char addr[BT_ADDR_LE_STR_LEN];
-    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-    LOG_ERR("❌ Pairing failed: %s (reason %d)", addr, reason);
-}
 
 // Use correct callback structure
 static struct bt_conn_auth_cb auth_callbacks = {
@@ -1463,23 +1410,7 @@ static struct bt_conn_auth_cb auth_callbacks = {
     // Note: pairing_complete is handled by security_changed callback
 };
 
-// Security changed callback for pairing completion
-static void security_changed(struct bt_conn *conn, bt_security_t level,
-                             enum bt_security_err err) {
-    char addr[BT_ADDR_LE_STR_LEN];
-    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-    
-    if (err) {
-        LOG_ERR("Security failed: %s level %u err %d", addr, level, err);
-        return;
-    }
-    
-    if (level >= BT_SECURITY_L2) {
-        LOG_INF("✅ Device paired: %s (security level %u)", addr, level);
-        refresh_bond_list();
-        save_bond_aliases();
-    }
-}
+
 
 
 
@@ -1512,6 +1443,43 @@ static int save_bond_aliases(void) {
     }
     LOG_INF("Bond aliases saved to NVS with aliases %s", bond_list[0].alias);
     return 0;
+}
+
+
+// ============================================================================
+// Simple Profile Switching
+// ============================================================================
+
+static void switch_to_next_available_profile(void) {
+    uint8_t current_profile = zmk_ble_active_profile_index();
+    
+    LOG_INF("🔄 Current profile: %d - Searching for next available...", current_profile);
+    
+    // Try next profiles in sequence
+    for (int i = 1; i <= CONFIG_BT_MAX_PAIRED; i++) {
+        uint8_t next_profile = (current_profile + i) % CONFIG_BT_MAX_PAIRED;
+        
+        LOG_DBG("  Trying profile %d...", next_profile);
+        
+        // Switch to this profile
+        int ret = zmk_ble_prof_select(next_profile);
+        if (ret == 0) {
+            LOG_INF("✅ Switched to profile %d", next_profile);
+            
+            // Check if this profile is already connected
+            bool is_open = zmk_ble_active_profile_is_open();
+            if (is_open) {
+                LOG_INF("  Profile %d is OPEN - ready for new connections", next_profile);
+                return;
+            } else {
+                LOG_DBG("  Profile %d is already connected - trying next", next_profile);
+            }
+        } else {
+            LOG_DBG("  Profile %d: switch failed (%d)", next_profile, ret);
+        }
+    }
+    
+    LOG_WRN("⚠️  All profiles are full or in use - staying on profile %d", current_profile);
 }
 
 static ssize_t read_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -1652,13 +1620,7 @@ static int battery_monitor_init(void) {
     refresh_bond_list();
     
 
-    // Register pairing callbacks
-    ret = bt_conn_auth_cb_register(&auth_callbacks);
-    if (ret) {
-        LOG_ERR("Failed to register auth callbacks: %d", ret);
-    } else {
-        LOG_INF("✅ Multi-device pairing enabled");
-    }
+ 
 
 
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
