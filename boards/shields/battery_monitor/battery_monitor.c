@@ -157,7 +157,8 @@ static struct bond_info bond_list[CONFIG_BT_MAX_PAIRED];
 static uint8_t bond_count = 0;
 static K_MUTEX_DEFINE(conn_mutex);
 
-
+static void security_changed(struct bt_conn *conn, bt_security_t level,
+                             enum bt_security_err err);
 
 
 // ============================================================================
