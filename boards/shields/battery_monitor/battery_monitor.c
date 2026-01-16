@@ -1379,6 +1379,76 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
 // MULTI BOND STORAGE
 // ============================================================================
 
+
+// ============================================================================
+// Pairing Management for Multi-Connection
+// ============================================================================
+
+static enum bt_security_err pairing_accept(struct bt_conn *conn,
+                                           const struct bt_conn_pairing_feat *const feat) {
+    // Check if we have available slots
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    int active_count = 0;
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i] != NULL) {
+            active_count++;
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    if (active_count >= MAX_CONNECTIONS) {
+        LOG_ERR("Cannot pair: All connection slots full (%d/%d)", 
+                active_count, MAX_CONNECTIONS);
+        return BT_SECURITY_ERR_PAIR_NOT_ALLOWED;
+    }
+    
+    // Check if device is already bonded
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    
+    const bt_addr_le_t *conn_addr = bt_conn_get_dst(conn);
+    bool already_bonded = false;
+    
+    for (int i = 0; i < bond_count; i++) {
+        if (bt_addr_le_eq(&bond_list[i].addr, conn_addr)) {
+            already_bonded = true;
+            LOG_INF("Device %s already bonded - accepting", addr);
+            break;
+        }
+    }
+    
+    if (!already_bonded) {
+        LOG_INF("New device %s requesting pairing - accepting", addr);
+    }
+    
+    return BT_SECURITY_ERR_SUCCESS;
+}
+
+static void pairing_complete(struct bt_conn *conn, bool bonded) {
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    
+    if (bonded) {
+        LOG_INF("✅ Pairing complete: %s (bonded)", addr);
+        refresh_bond_list();
+        save_bond_aliases();
+    } else {
+        LOG_WRN("⚠️  Pairing complete: %s (not bonded)", addr);
+    }
+}
+
+static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason) {
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_ERR("❌ Pairing failed: %s (reason %d)", addr, reason);
+}
+
+static struct bt_conn_auth_cb auth_callbacks = {
+    .pairing_accept = pairing_accept,
+    .pairing_complete = pairing_complete,
+    .pairing_failed = pairing_failed,
+};
+
 static int settings_set_bonds(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
     const char *next;
     
@@ -1547,6 +1617,16 @@ static int battery_monitor_init(void) {
     memset(active_conns, 0, sizeof(active_conns));
     refresh_bond_list();
     
+
+    // Register pairing callbacks
+    ret = bt_conn_auth_cb_register(&auth_callbacks);
+    if (ret) {
+        LOG_ERR("Failed to register auth callbacks: %d", ret);
+    } else {
+        LOG_INF("✅ Multi-device pairing enabled");
+    }
+
+
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     LOG_INF("📡 CONNECTION MANAGEMENT:");
     LOG_INF("  Max connections: %d", MAX_CONNECTIONS);
