@@ -1009,6 +1009,7 @@ static void disconnected_cb(struct bt_conn *conn, uint8_t reason) {
 BT_CONN_CB_DEFINE(conn_callbacks) = {
     .connected = connected_cb,
     .disconnected = disconnected_cb,
+    .security_changed = security_changed,  // ← THÊM DÒNG NÀY
 };
 
 
@@ -1384,6 +1385,16 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
 // Pairing Management for Multi-Connection
 // ============================================================================
 
+
+// THÊM DÒNG NÀY:
+static int save_bond_aliases(void);
+
+
+
+// ============================================================================
+// Pairing Management for Multi-Connection
+// ============================================================================
+
 static enum bt_security_err pairing_accept(struct bt_conn *conn,
                                            const struct bt_conn_pairing_feat *const feat) {
     // Check if we have available slots
@@ -1424,23 +1435,34 @@ static enum bt_security_err pairing_accept(struct bt_conn *conn,
     return BT_SECURITY_ERR_SUCCESS;
 }
 
-static void pairing_complete(struct bt_conn *conn, bool bonded) {
-    char addr[BT_ADDR_LE_STR_LEN];
-    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
-    
-    if (bonded) {
-        LOG_INF("✅ Pairing complete: %s (bonded)", addr);
-        refresh_bond_list();
-        save_bond_aliases();
-    } else {
-        LOG_WRN("⚠️  Pairing complete: %s (not bonded)", addr);
-    }
-}
-
 static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason) {
     char addr[BT_ADDR_LE_STR_LEN];
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
     LOG_ERR("❌ Pairing failed: %s (reason %d)", addr, reason);
+}
+
+// Use correct callback structure
+static struct bt_conn_auth_cb auth_callbacks = {
+    .pairing_accept = pairing_accept,
+    // Note: pairing_complete is handled by security_changed callback
+};
+
+// Security changed callback for pairing completion
+static void security_changed(struct bt_conn *conn, bt_security_t level,
+                             enum bt_security_err err) {
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    
+    if (err) {
+        LOG_ERR("Security failed: %s level %u err %d", addr, level, err);
+        return;
+    }
+    
+    if (level >= BT_SECURITY_L2) {
+        LOG_INF("✅ Device paired: %s (security level %u)", addr, level);
+        refresh_bond_list();
+        save_bond_aliases();
+    }
 }
 
 static struct bt_conn_auth_cb auth_callbacks = {
