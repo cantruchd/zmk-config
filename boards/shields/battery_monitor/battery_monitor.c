@@ -1404,13 +1404,6 @@ static int save_bond_aliases(void);
 
 
 
-// Use correct callback structure
-static struct bt_conn_auth_cb auth_callbacks = {
-    .pairing_accept = pairing_accept,
-    // Note: pairing_complete is handled by security_changed callback
-};
-
-
 
 
 
