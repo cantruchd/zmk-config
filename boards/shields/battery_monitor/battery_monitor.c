@@ -972,25 +972,15 @@ static void connected_cb(struct bt_conn *conn, uint8_t err) {
     k_mutex_unlock(&conn_mutex);
     
     LOG_INF("Active connections: %d/%d", active_count, MAX_CONNECTIONS);
-    
-    // Nếu chưa đầy thì restart advertising
-    if (active_count < MAX_CONNECTIONS) {
-        LOG_INF("Restarting advertising (slots available: %d)", MAX_CONNECTIONS - active_count);
-        
-        struct bt_le_adv_param adv_param = {
-            .id = BT_ID_DEFAULT,
-            .options = BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_ONE_TIME,
-            .interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
-            .interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
-        };
-        
-        int ret = bt_le_adv_start(&adv_param, NULL, 0, NULL, 0);
-        if (ret) {
-            LOG_ERR("Failed to restart advertising: %d", ret);
-        }
+
+    // ZMK handles advertising automatically - no manual control needed
+    if (active_count >= MAX_CONNECTIONS) {
+        LOG_INF("All connection slots full");
     } else {
-        LOG_INF("All connection slots full - advertising stopped");
+        LOG_DBG("Slots available: %d - ZMK will continue advertising", MAX_CONNECTIONS - active_count);
     }
+    
+    
 }
 
 static void disconnected_cb(struct bt_conn *conn, uint8_t reason) {
@@ -1001,21 +991,19 @@ static void disconnected_cb(struct bt_conn *conn, uint8_t reason) {
     remove_connection(conn);
     refresh_bond_list();
     
-    // ALWAYS restart advertising để accept connections mới
-    // Không cần check has_connections vì multi-connection cần luôn sẵn sàng
-    LOG_INF("Restarting advertising for new connections");
-    
-    struct bt_le_adv_param adv_param = {
-        .id = BT_ID_DEFAULT,
-        .options = BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_ONE_TIME,
-        .interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
-        .interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
-    };
-    
-    int ret = bt_le_adv_start(&adv_param, NULL, 0, NULL, 0);
-    if (ret) {
-        LOG_ERR("Failed to restart advertising: %d", ret);
+    // Log connection status
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    int active_count = 0;
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i] != NULL) {
+            active_count++;
+        }
     }
+    k_mutex_unlock(&conn_mutex);
+    
+    LOG_INF("Connections after disconnect: %d/%d", active_count, MAX_CONNECTIONS);
+    
+    // ZMK will automatically restart advertising when slots are available
 }
 
 BT_CONN_CB_DEFINE(conn_callbacks) = {
@@ -1603,22 +1591,6 @@ static int battery_monitor_init(void) {
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
-    // Start advertising on boot
-    struct bt_le_adv_param adv_param = {
-        .id = BT_ID_DEFAULT,
-        .options = BT_LE_ADV_OPT_CONNECTABLE | BT_LE_ADV_OPT_ONE_TIME,
-        .interval_min = BT_GAP_ADV_FAST_INT_MIN_2,
-        .interval_max = BT_GAP_ADV_FAST_INT_MAX_2,
-    };
-    
-    ret = bt_le_adv_start(&adv_param, NULL, 0, NULL, 0);
-    if (ret) {
-        LOG_ERR("Failed to start advertising: %d", ret);
-    } else {
-        LOG_INF("✅ Advertising started - accepting connections");
-    }
-    
-   
     return 0;
 }
 
