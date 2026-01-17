@@ -1,7 +1,7 @@
 """
 ZMK Battery Monitor - Complete GUI Control Panel
-Features: Power Control, Temperature Monitoring, Settings, Bond Management, Battery %
-Dependencies: pip install bleak
+Features: Connected Devices Detection, Power Control, Temperature Monitoring, Settings, Bond Management, Battery %, RSSI
+Dependencies: pip install bleak tkinter
 """
 
 import asyncio
@@ -11,6 +11,7 @@ from tkinter import ttk, messagebox, scrolledtext
 from bleak import BleakClient, BleakScanner
 from datetime import datetime
 import threading
+import platform
 
 # ============================================================================
 # UUIDs
@@ -36,7 +37,7 @@ CMD_POWER_TOGGLE = 0x02
 CMD_RESET_DEVICE = 0x52
 
 # ============================================================================
-# BLE Manager
+# BLE Manager with Connected Devices Detection
 # ============================================================================
 
 class BatteryMonitorBLE:
@@ -45,132 +46,198 @@ class BatteryMonitorBLE:
         self.client = None
         self.connected = False
         self.device_address = None
+        self.last_rssi = None  # Store RSSI from scan to use during connection
         
-    async def scan_devices(self, include_paired=True):
-        """Scan for available devices"""
-        devices_dict = {}
+    async def get_connected_devices(self):
+        """
+        Lấy danh sách thiết bị đang kết nối với hệ thống
+        Returns: List of (name, address, status) tuples
+        """
+        connected_devices = []
+        system = platform.system()
         
-        # 1. BLE Advertisement Scan - Tìm devices đang phát sóng
-        self.gui.log("🔍 Scanning BLE advertisements...")
-        discovered = await BleakScanner.discover(timeout=5.0)
-        for d in discovered:
-            if d.name:
-                devices_dict[d.address] = {
-                    'name': d.name,
-                    'address': d.address,
-                    'source': '📡 Advertising',
-                    'rssi': d.rssi if hasattr(d, 'rssi') else None
-                }
+        self.gui.log(f"🔍 Checking connected devices on {system}...")
         
-        # 2. Get paired/connected devices from OS
-        if include_paired:
-            self.gui.log("🔗 Checking OS paired devices...")
-            try:
-                import platform
-                system = platform.system()
-                
-                if system == "Windows":
-                    paired = await self._get_windows_paired_devices()
-                elif system == "Darwin":  # macOS
-                    paired = await self._get_macos_paired_devices()
-                else:  # Linux
-                    paired = await self._get_linux_paired_devices()
-                
-                # Merge with discovered devices
-                for addr, info in paired.items():
-                    if addr in devices_dict:
-                        # Device found in both sources
-                        devices_dict[addr]['source'] = '✅ Paired + Advertising'
-                    else:
-                        # Device only in paired list (not advertising)
-                        devices_dict[addr] = {
-                            'name': info['name'],
-                            'address': addr,
-                            'source': '🔗 Paired Only',
-                            'rssi': None
-                        }
-            except Exception as e:
-                self.gui.log(f"⚠️  Could not get paired devices: {e}")
-        
-        # Convert to list and sort by source priority
-        source_priority = {'✅ Paired + Advertising': 0, '📡 Advertising': 1, '🔗 Paired Only': 2}
-        devices_list = sorted(
-            devices_dict.values(),
-            key=lambda x: source_priority.get(x['source'], 3)
-        )
-        
-        return [(f"{d['name']} {d['source']}", d['address']) for d in devices_list]
-    
-    async def _get_windows_paired_devices(self):
-        """Get paired devices from Windows (requires winrt)"""
-        devices = {}
         try:
-            # Try using winrt if available
-            from winrt.windows.devices.bluetooth import BluetoothDevice
-            from winrt.windows.devices.enumeration import DeviceInformation
-            
-            # This is a simplified version - full implementation needs more code
-            # For now, return empty dict
-            pass
-        except ImportError:
-            # Fallback: Use registry (Windows only)
-            try:
-                import winreg
-                key_path = r"SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices"
-                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
-                    i = 0
-                    while True:
-                        try:
-                            device_key = winreg.EnumKey(key, i)
-                            # Convert registry key to MAC address format
-                            mac = ':'.join([device_key[j:j+2] for j in range(0, 12, 2)])
-                            
-                            with winreg.OpenKey(key, device_key) as device:
-                                try:
-                                    name = winreg.QueryValueEx(device, "Name")[0]
-                                    devices[mac.upper()] = {'name': name}
-                                except:
-                                    devices[mac.upper()] = {'name': f"Device {mac}"}
-                            i += 1
-                        except OSError:
-                            break
-            except Exception as e:
-                self.gui.log(f"⚠️  Registry read failed: {e}")
+            if system == "Windows":
+                connected_devices = await self._get_windows_connected()
+            elif system == "Darwin":  # macOS
+                connected_devices = await self._get_macos_connected()
+            elif system == "Linux":
+                connected_devices = await self._get_linux_connected()
+            else:
+                self.gui.log(f"⚠️ Platform {system} not fully supported")
+        except Exception as e:
+            self.gui.log(f"❌ Error getting connected devices: {e}")
         
-        return devices
+        return connected_devices
     
-    async def _get_macos_paired_devices(self):
-        """Get paired devices from macOS"""
-        devices = {}
+    async def _get_windows_connected(self):
+        """Lấy connected devices trên Windows"""
+        connected = []
+        
+        # Method 1: PowerShell - Get connected Bluetooth devices
         try:
-            # Use system_profiler to get Bluetooth devices
             import subprocess
+            import re
+            
+            # Query Windows for connected Bluetooth devices
+            result = subprocess.run(
+                ['powershell', '-Command', 
+                 'Get-PnpDevice -Class Bluetooth | Where-Object {$_.Status -eq "OK"} | Select-Object FriendlyName, InstanceId | Format-List'],
+                capture_output=True,
+                text=True,
+                timeout=8
+            )
+            
+            if result.returncode == 0:
+                # Parse output
+                current_device = {}
+                for line in result.stdout.split('\n'):
+                    line = line.strip()
+                    
+                    if line.startswith('FriendlyName'):
+                        name = line.split(':', 1)[1].strip()
+                        current_device['name'] = name
+                    
+                    elif line.startswith('InstanceId'):
+                        instance_id = line.split(':', 1)[1].strip()
+                        current_device['instance_id'] = instance_id
+                        
+                        # Try to extract MAC address from InstanceId
+                        # Format: BTHLE\DEV_XXXXXXXXXXXX or BTH\{GUID}\XXXXXXXXXXXX
+                        mac_match = re.search(r'[_\\]([0-9A-F]{12})', instance_id, re.IGNORECASE)
+                        if mac_match:
+                            mac_hex = mac_match.group(1)
+                            # Convert to MAC format XX:XX:XX:XX:XX:XX
+                            mac = ':'.join([mac_hex[i:i+2] for i in range(0, 12, 2)])
+                            current_device['address'] = mac.upper()
+                            
+                            # Add to connected list
+                            if 'name' in current_device and 'address' in current_device:
+                                # Skip generic services
+                                if not any(skip in current_device['name'] for skip in [
+                                    'Generic Access Profile',
+                                    'Generic Attribute Profile', 
+                                    'Bluetooth LE Generic',
+                                    'Device Information Service',
+                                    'Device Identification Service',
+                                    'Microsoft Bluetooth',
+                                    'Service Discovery',
+                                    'Avrcp Transport',
+                                    'RFCOMM Protocol',
+                                    'Intel(R) Wireless',
+                                    'Nefarius'
+                                ]):
+                                    # Check if not duplicate
+                                    if not any(d['address'] == current_device['address'] for d in connected):
+                                        connected.append({
+                                            'name': current_device['name'],
+                                            'address': current_device['address'],
+                                            'status': '🟢 Connected',
+                                            'rssi': None
+                                        })
+                                        self.gui.log(f"  ✓ {current_device['name']} ({current_device['address']})")
+                        
+                        current_device = {}
+                    
+        except Exception as e:
+            self.gui.log(f"⚠️ PowerShell query failed: {e}")
+        
+        # Method 2: BLE Scan with high RSSI (likely connected)
+        try:
+            self.gui.log("📡 Scanning BLE for strong signals...")
+            devices = await BleakScanner.discover(timeout=3.0, return_adv=True)
+            
+            for address, (device, adv_data) in devices.items():
+                # RSSI > -60 usually means connected or very close
+                if hasattr(device, 'rssi') and device.rssi and device.rssi > -60:
+                    if device.name and not any(d['address'] == address for d in connected):
+                        # Skip generic services
+                        if not any(skip in device.name for skip in [
+                            'Generic Access',
+                            'Generic Attribute',
+                            'Bluetooth LE Generic',
+                            'Device Information',
+                            'Device Identification'
+                        ]):
+                            connected.append({
+                                'name': device.name,
+                                'address': address,
+                                'rssi': device.rssi,
+                                'status': f'🟢 Active (RSSI: {device.rssi})'
+                            })
+                            self.gui.log(f"  ✓ {device.name} ({address}) RSSI: {device.rssi}")
+        
+        except Exception as e:
+            self.gui.log(f"⚠️ BLE scan error: {e}")
+        
+        return connected
+    
+    async def _get_macos_connected(self):
+        """Lấy connected devices trên macOS"""
+        connected = []
+        
+        try:
+            import subprocess
+            
+            # Sử dụng system_profiler
             result = subprocess.run(
                 ['system_profiler', 'SPBluetoothDataType', '-json'],
                 capture_output=True,
                 text=True,
-                timeout=3
+                timeout=5
             )
             
             if result.returncode == 0:
                 import json
                 data = json.loads(result.stdout)
-                # Parse Bluetooth data (simplified - actual structure is complex)
-                # This would need proper parsing based on macOS version
-                pass
-        except Exception as e:
-            self.gui.log(f"⚠️  macOS query failed: {e}")
+                
+                # Parse devices (structure varies by macOS version)
+                if 'SPBluetoothDataType' in data:
+                    bt_data = data['SPBluetoothDataType'][0]
+                    
+                    # Connected devices
+                    if 'device_connected' in bt_data:
+                        for device in bt_data['device_connected']:
+                            connected.append({
+                                'name': device.get('device_name', 'Unknown'),
+                                'address': device.get('device_address', 'N/A'),
+                                'status': '🟢 Connected'
+                            })
         
-        return devices
+        except Exception as e:
+            self.gui.log(f"⚠️ macOS query error: {e}")
+        
+        # Alternative: Scan with high RSSI filter
+        try:
+            devices = await BleakScanner.discover(timeout=3.0, return_adv=True)
+            
+            for address, (device, adv_data) in devices.items():
+                if hasattr(device, 'rssi') and device.rssi and device.rssi > -60:
+                    # Check if not already in list
+                    if not any(d['address'] == address for d in connected):
+                        connected.append({
+                            'name': device.name or 'Unknown',
+                            'address': address,
+                            'rssi': device.rssi,
+                            'status': '🟢 Active'
+                        })
+        except Exception as e:
+            self.gui.log(f"⚠️ macOS scan error: {e}")
+        
+        return connected
     
-    async def _get_linux_paired_devices(self):
-        """Get paired devices from Linux (using bluetoothctl)"""
-        devices = {}
+    async def _get_linux_connected(self):
+        """Lấy connected devices trên Linux"""
+        connected = []
+        
         try:
             import subprocess
-            # Get paired devices using bluetoothctl
+            
+            # Method 1: bluetoothctl info (shows connected devices)
             result = subprocess.run(
-                ['bluetoothctl', 'devices', 'Paired'],
+                ['bluetoothctl', 'devices', 'Connected'],
                 capture_output=True,
                 text=True,
                 timeout=3
@@ -181,17 +248,121 @@ class BatteryMonitorBLE:
                     if 'Device' in line:
                         parts = line.split()
                         if len(parts) >= 3:
-                            addr = parts[1]
+                            address = parts[1]
                             name = ' '.join(parts[2:])
-                            devices[addr.upper()] = {'name': name}
-        except Exception as e:
-            self.gui.log(f"⚠️  bluetoothctl failed: {e}")
+                            connected.append({
+                                'name': name,
+                                'address': address,
+                                'status': '🟢 Connected'
+                            })
+            
+            # Method 2: Check /sys/class/bluetooth
+            import os
+            bt_path = '/sys/class/bluetooth'
+            if os.path.exists(bt_path):
+                for controller in os.listdir(bt_path):
+                    controller_path = os.path.join(bt_path, controller)
+                    if os.path.isdir(controller_path):
+                        # List connected devices
+                        for device in os.listdir(controller_path):
+                            if device.startswith('hci'):
+                                continue
+                            
+                            connected_file = os.path.join(controller_path, device, 'connected')
+                            if os.path.exists(connected_file):
+                                with open(connected_file, 'r') as f:
+                                    if f.read().strip() == '1':
+                                        # Device is connected
+                                        name_file = os.path.join(controller_path, device, 'name')
+                                        name = 'Unknown'
+                                        if os.path.exists(name_file):
+                                            with open(name_file, 'r') as f:
+                                                name = f.read().strip()
+                                        
+                                        # Convert device ID to MAC
+                                        mac = device.replace('_', ':')
+                                        
+                                        if not any(d['address'] == mac for d in connected):
+                                            connected.append({
+                                                'name': name,
+                                                'address': mac,
+                                                'status': '🟢 Connected (sys)'
+                                            })
         
-        return devices
+        except Exception as e:
+            self.gui.log(f"⚠️ Linux query error: {e}")
+        
+        return connected
     
-    async def connect(self, address):
+    async def scan_devices(self, scan_mode='all'):
+        """
+        Scan for available devices
+        scan_mode: 'all', 'connected', 'advertising'
+        """
+        devices_dict = {}
+        
+        # 1. Get connected devices first
+        if scan_mode in ['all', 'connected']:
+            self.gui.log("🔗 Checking connected devices...")
+            connected = await self.get_connected_devices()
+            
+            for device in connected:
+                addr = device['address']
+                devices_dict[addr] = {
+                    'name': device['name'],
+                    'address': addr,
+                    'source': device['status'],
+                    'rssi': device.get('rssi')
+                }
+        
+        # 2. BLE Advertisement Scan
+        if scan_mode in ['all', 'advertising']:
+            self.gui.log("📡 Scanning BLE advertisements...")
+            discovered = await BleakScanner.discover(timeout=5.0, return_adv=True)
+            
+            for address, (device, adv_data) in discovered.items():
+                if device.name:
+                    rssi = device.rssi if hasattr(device, 'rssi') else None
+                    
+                    if address in devices_dict:
+                        # Device found in both - update status and RSSI
+                        devices_dict[address]['source'] = '✅ Connected + Advertising'
+                        if rssi is not None:
+                            devices_dict[address]['rssi'] = rssi
+                    else:
+                        # New device from advertising
+                        devices_dict[address] = {
+                            'name': device.name,
+                            'address': address,
+                            'source': '📡 Advertising',
+                            'rssi': rssi
+                        }
+        
+        # Convert to list and sort
+        source_priority = {
+            '✅ Connected + Advertising': 0,
+            '🟢 Connected': 1,
+            '🟢 Active': 1,
+            '📡 Advertising': 2
+        }
+        
+        devices_list = sorted(
+            devices_dict.values(),
+            key=lambda x: (source_priority.get(x['source'], 3), -(x['rssi'] or -100))
+        )
+        
+        # Return devices with RSSI info stored
+        return [(f"{d['name']} {d['source']}", d['address'], d['rssi']) for d in devices_list]
+    
+    async def connect(self, address, rssi_from_scan=None):
         """Connect to device"""
         try:
+            # Store RSSI from scan
+            if rssi_from_scan is not None:
+                self.last_rssi = rssi_from_scan
+                self.gui.update_rssi(rssi_from_scan)
+                self.gui.log(f"📡 Initial RSSI from scan: {rssi_from_scan} dBm")
+            
             self.client = BleakClient(address)
             await self.client.connect()
             self.connected = True
@@ -204,7 +375,11 @@ class BatteryMonitorBLE:
             await self.client.start_notify(VOLTAGE_UUID, self.voltage_notification)
             await self.client.start_notify(AUTO_SETTINGS_UUID, self.auto_settings_notification)
             await self.client.start_notify(TEMP_SETTINGS_UUID, self.temp_settings_notification)
-            await self.client.start_notify(BATTERY_LEVEL_UUID, self.battery_level_notification)
+            
+            try:
+                await self.client.start_notify(BATTERY_LEVEL_UUID, self.battery_level_notification)
+            except Exception as e:
+                self.gui.log(f"⚠️  Battery service not available: {e}")
             
             # Read initial values
             await self.read_all_data()
@@ -247,6 +422,9 @@ class BatteryMonitorBLE:
             except Exception as e:
                 self.gui.log(f"⚠️  Battery level not available: {e}")
             
+            # Read RSSI - Call after reading characteristics (similar to Android's onCharacteristicRead)
+            await self.read_remote_rssi()
+            
             # Read settings
             data = await self.client.read_gatt_char(AUTO_SETTINGS_UUID)
             self.auto_settings_notification(None, data)
@@ -258,8 +436,77 @@ class BatteryMonitorBLE:
             data = await self.client.read_gatt_char(BOND_MANAGEMENT_UUID)
             self.parse_bonds(data)
             
+            self.gui.log("✅ All data refreshed")
+            
         except Exception as e:
             self.gui.log(f"⚠️  Error reading data: {e}")
+    
+    async def read_remote_rssi(self):
+        """
+        Read remote RSSI - Equivalent to Android's gatt.readRemoteRssi()
+        In Bleak, this accesses the platform-specific backend
+        If no new RSSI available, keep the last known value
+        """
+        try:
+            # The equivalent of Android's gatt.readRemoteRssi() in Bleak
+            # is to access the device's RSSI through the backend
+            
+            # Method 1: Try Bleak's internal backend device property
+            if hasattr(self.client, '_backend') and hasattr(self.client._backend, '_device'):
+                device = self.client._backend._device
+                
+                # Windows: device has SignalStrength property
+                if hasattr(device, 'SignalStrength'):
+                    rssi = device.SignalStrength
+                    self.last_rssi = rssi  # Update stored value
+                    self.gui.update_rssi(rssi)
+                    self.gui.log(f"📡 RSSI: {rssi} dBm")
+                    return
+                
+                # macOS: peripheral has RSSI property
+                elif hasattr(device, 'RSSI'):
+                    rssi = int(device.RSSI())
+                    self.last_rssi = rssi  # Update stored value
+                    self.gui.update_rssi(rssi)
+                    self.gui.log(f"📡 RSSI: {rssi} dBm")
+                    return
+            
+            # Method 2: Linux BlueZ - Use D-Bus to read RSSI property
+            if hasattr(self.client, '_backend') and hasattr(self.client._backend, '_device_path'):
+                try:
+                    import dbus
+                    bus = dbus.SystemBus()
+                    device_obj = bus.get_object('org.bluez', self.client._backend._device_path)
+                    device_props = dbus.Interface(device_obj, 'org.freedesktop.DBus.Properties')
+                    rssi = int(device_props.Get('org.bluez.Device1', 'RSSI'))
+                    
+                    self.last_rssi = rssi  # Update stored value
+                    self.gui.update_rssi(rssi)
+                    self.gui.log(f"📡 RSSI: {rssi} dBm")
+                    return
+                except Exception as e:
+                    self.gui.log(f"⚠️  D-Bus RSSI read failed: {e}")
+            
+            # Method 3: Fallback - some Bleak versions have get_rssi()
+            if hasattr(self.client, 'get_rssi'):
+                rssi = await self.client.get_rssi()
+                self.last_rssi = rssi  # Update stored value
+                self.gui.update_rssi(rssi)
+                self.gui.log(f"📡 RSSI: {rssi} dBm")
+                return
+            
+            # If no new RSSI available, keep the last known value
+            if self.last_rssi is not None:
+                self.gui.log(f"📡 RSSI: {self.last_rssi} dBm (from scan, platform doesn't support live read)")
+            else:
+                self.gui.log(f"⚠️  RSSI not available")
+            
+        except Exception as e:
+            # Keep last known RSSI on error
+            if self.last_rssi is not None:
+                self.gui.log(f"⚠️  RSSI read error: {e}, keeping last value: {self.last_rssi} dBm")
+            else:
+                self.gui.log(f"⚠️  RSSI read error: {e}")
     
     # Notification handlers
     def power_notification(self, sender, data):
@@ -387,12 +634,18 @@ class BatteryMonitorBLE:
 
 class BatteryMonitorGUI:
     def __init__(self):
+        self._closing = False  # ← Khởi tạo TRƯỚC TIÊN
+        self.loop = None
+        self.scanned_devices = {}
+        
         self.root = tk.Tk()
-        self.root.title("ZMK Battery Monitor Control Panel")
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close) 
+        self.root.title("ZMK Battery Monitor - Connected Devices Finder")
         self.root.geometry("900x700")
         
         self.ble = BatteryMonitorBLE(self)
         self.loop = None
+        self.scanned_devices = {}  # Store {address: (name, rssi)} mapping
         
         self.create_widgets()
         self.start_async_loop()
@@ -400,23 +653,42 @@ class BatteryMonitorGUI:
     def create_widgets(self):
         """Create GUI widgets"""
         
-        # Top frame - Connection
+        # Top frame - Connection với scan mode selector
         conn_frame = ttk.LabelFrame(self.root, text="Connection", padding=10)
         conn_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        ttk.Label(conn_frame, text="Device:").grid(row=0, column=0, sticky=tk.W)
+        # Row 0: Scan mode
+        ttk.Label(conn_frame, text="Scan Mode:").grid(row=0, column=0, sticky=tk.W)
+        self.scan_mode_var = tk.StringVar(value='all')
+        mode_frame = ttk.Frame(conn_frame)
+        mode_frame.grid(row=0, column=1, columnspan=3, sticky=tk.W, padx=5)
+        
+        ttk.Radiobutton(mode_frame, text="All Devices", variable=self.scan_mode_var, 
+                       value='all').pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="Connected Only", variable=self.scan_mode_var, 
+                       value='connected').pack(side=tk.LEFT, padx=5)
+        ttk.Radiobutton(mode_frame, text="Advertising Only", variable=self.scan_mode_var, 
+                       value='advertising').pack(side=tk.LEFT, padx=5)
+        
+        # Row 1: Device selection
+        ttk.Label(conn_frame, text="Device:").grid(row=1, column=0, sticky=tk.W, pady=5)
         self.device_var = tk.StringVar()
-        self.device_combo = ttk.Combobox(conn_frame, textvariable=self.device_var, width=40)
-        self.device_combo.grid(row=0, column=1, padx=5)
+        self.device_combo = ttk.Combobox(conn_frame, textvariable=self.device_var, width=50)
+        self.device_combo.grid(row=1, column=1, columnspan=2, padx=5, sticky=tk.EW)
         
-        self.scan_btn = ttk.Button(conn_frame, text="Scan", command=self.scan_devices)
-        self.scan_btn.grid(row=0, column=2, padx=5)
+        # Row 2: Buttons
+        btn_frame = ttk.Frame(conn_frame)
+        btn_frame.grid(row=2, column=0, columnspan=4, pady=5)
         
-        self.connect_btn = ttk.Button(conn_frame, text="Connect", command=self.connect_device)
-        self.connect_btn.grid(row=0, column=3, padx=5)
+        self.scan_btn = ttk.Button(btn_frame, text="🔍 Scan", command=self.scan_devices)
+        self.scan_btn.pack(side=tk.LEFT, padx=5)
         
-        self.disconnect_btn = ttk.Button(conn_frame, text="Disconnect", command=self.disconnect_device, state=tk.DISABLED)
-        self.disconnect_btn.grid(row=0, column=4, padx=5)
+        self.connect_btn = ttk.Button(btn_frame, text="🔗 Connect", command=self.connect_device)
+        self.connect_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.disconnect_btn = ttk.Button(btn_frame, text="🔌 Disconnect", 
+                                        command=self.disconnect_device, state=tk.DISABLED)
+        self.disconnect_btn.pack(side=tk.LEFT, padx=5)
         
         # Notebook for tabs
         notebook = ttk.Notebook(self.root)
@@ -448,7 +720,7 @@ class BatteryMonitorGUI:
         self.create_bond_tab(bond_tab)
         
         # Bottom frame - Log
-        log_frame = ttk.LabelFrame(self.root, text="Log", padding=10)
+        log_frame = ttk.LabelFrame(self.root, text="📝 Activity Log", padding=10)
         log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
         self.log_text = scrolledtext.ScrolledText(log_frame, height=8, state=tk.DISABLED)
@@ -485,6 +757,19 @@ class BatteryMonitorGUI:
         ttk.Label(status_frame, text="Battery Level:", font=('Arial', 12, 'bold')).grid(row=4, column=0, sticky=tk.W, pady=5)
         self.battery_label = ttk.Label(status_frame, text="--", font=('Arial', 12))
         self.battery_label.grid(row=4, column=1, sticky=tk.W, padx=10)
+        
+        # RSSI Signal Strength
+        ttk.Label(status_frame, text="Signal (RSSI):", font=('Arial', 12, 'bold')).grid(row=5, column=0, sticky=tk.W, pady=5)
+        self.rssi_label = ttk.Label(status_frame, text="--", font=('Arial', 12))
+        self.rssi_label.grid(row=5, column=1, sticky=tk.W, padx=10)
+        
+        # Read button
+        ttk.Separator(status_frame, orient=tk.HORIZONTAL).grid(row=6, column=0, columnspan=2, sticky=tk.EW, pady=15)
+        
+        self.read_btn = ttk.Button(status_frame, text="🔄 Read All Data", 
+                                   command=lambda: self.run_async(self.ble.read_all_data()),
+                                   state=tk.DISABLED)
+        self.read_btn.grid(row=7, column=0, columnspan=2, pady=10)
     
     def create_power_tab(self, parent):
         """Create power control tab"""
@@ -676,6 +961,29 @@ class BatteryMonitorGUI:
         
         self.battery_label.config(text=f"{level}%", foreground=color)
     
+    def update_rssi(self, rssi):
+        """Update RSSI signal strength"""
+        # RSSI interpretation:
+        # > -50: Excellent
+        # -50 to -60: Good
+        # -60 to -70: Fair
+        # < -70: Weak
+        
+        if rssi > -50:
+            color = 'green'
+            quality = 'Excellent'
+        elif rssi > -60:
+            color = 'green'
+            quality = 'Good'
+        elif rssi > -70:
+            color = 'orange'
+            quality = 'Fair'
+        else:
+            color = 'red'
+            quality = 'Weak'
+        
+        self.rssi_label.config(text=f"{rssi} dBm ({quality})", foreground=color)
+    
     def update_auto_settings(self, settings):
         self.auto_on_var.set(settings['auto_on_enabled'])
         self.auto_on_spin.delete(0, tk.END)
@@ -738,27 +1046,40 @@ class BatteryMonitorGUI:
     
     # Action methods
     def scan_devices(self):
-        """Scan for BLE devices"""
-        self.log("🔍 Scanning for devices...")
+        """Scan for BLE devices based on selected mode"""
+        scan_mode = self.scan_mode_var.get()
+        mode_text = {
+            'all': 'all devices',
+            'connected': 'connected devices only',
+            'advertising': 'advertising devices only'
+        }
+        
+        self.log(f"🔍 Scanning for {mode_text[scan_mode]}...")
         self.scan_btn.config(state=tk.DISABLED)
         
         async def scan():
-            devices = await self.ble.scan_devices(include_paired=True)
-            self.device_combo['values'] = [f"{name} ({addr})" for name, addr in devices]
+            devices = await self.ble.scan_devices(scan_mode=scan_mode)
+            
+            # Store devices with RSSI info
+            self.scanned_devices.clear()
+            device_display_list = []
+            
+            for name, addr, rssi in devices:
+                self.scanned_devices[addr] = (name, rssi)
+                device_display_list.append(f"{name} ({addr})")
+                
+                # Log with RSSI immediately
+                rssi_text = f" RSSI: {rssi} dBm" if rssi is not None else " (no RSSI)"
+                self.log(f"  {addr}: {name.split('(')[0].strip()}{rssi_text}")
+            
+            self.device_combo['values'] = device_display_list
+            
             if devices:
                 self.device_combo.current(0)
-                self.log(f"✅ Found {len(devices)} devices")
-                
-                # Log device sources
-                for name, addr in devices:
-                    if '✅' in name:
-                        self.log(f"  {addr}: Paired + Active")
-                    elif '📡' in name:
-                        self.log(f"  {addr}: Advertising only")
-                    elif '🔗' in name:
-                        self.log(f"  {addr}: Paired but not advertising")
+                self.log(f"✅ Found {len(devices)} device(s) with RSSI data")
             else:
-                self.log("⚠️  No devices found")
+                self.log(f"⚠️ No devices found in {mode_text[scan_mode]} mode")
+            
             self.scan_btn.config(state=tk.NORMAL)
         
         self.run_async(scan())
@@ -770,16 +1091,27 @@ class BatteryMonitorGUI:
             messagebox.showwarning("Warning", "Please select a device first")
             return
         
-        # Extract address from "Name (Address)" format
-        address = device_str.split('(')[-1].strip(')')
+        # Extract address - handle both formats
+        if '(' in device_str and ')' in device_str:
+            address = device_str.split('(')[-1].strip(')')
+        else:
+            address = device_str
+        
+        # Get RSSI from scanned devices
+        rssi_from_scan = None
+        if address in self.scanned_devices:
+            _, rssi_from_scan = self.scanned_devices[address]
+            if rssi_from_scan is not None:
+                self.log(f"📡 Using RSSI from scan: {rssi_from_scan} dBm")
         
         self.log(f"🔄 Connecting to {address}...")
         self.connect_btn.config(state=tk.DISABLED)
         
         async def connect():
-            success = await self.ble.connect(address)
+            success = await self.ble.connect(address, rssi_from_scan)
             if success:
                 self.disconnect_btn.config(state=tk.NORMAL)
+                self.read_btn.config(state=tk.NORMAL)
             else:
                 self.connect_btn.config(state=tk.NORMAL)
         
@@ -791,6 +1123,7 @@ class BatteryMonitorGUI:
             await self.ble.disconnect()
             self.connect_btn.config(state=tk.NORMAL)
             self.disconnect_btn.config(state=tk.DISABLED)
+            self.read_btn.config(state=tk.DISABLED)
         
         self.run_async(disconnect())
     
@@ -935,12 +1268,34 @@ class BatteryMonitorGUI:
         self.root.mainloop()
     
     def on_close(self):
-        """Handle window close"""
-        if self.ble.connected:
-            self.run_async(self.ble.disconnect())
-        if self.loop:
-            self.loop.call_soon_threadsafe(self.loop.stop)
-        self.root.destroy()
+        if not self._closing:
+            self._closing = True
+            #self.log("🔄 Closing application...")
+            
+            # Disconnect if connected
+            if self.ble.connected:
+                # Create new event loop for synchronous context
+                disconnect_loop = asyncio.new_event_loop()
+                try:
+                    disconnect_loop.run_until_complete(
+                        asyncio.wait_for(self.ble.disconnect(), timeout=5.0)
+                    )
+                except asyncio.TimeoutError:
+                    #self.log("⚠️ Disconnect timeout during shutdown")
+                    pass
+                except Exception as e:
+                    #self.log(f"⚠️ Error during disconnect: {e}")
+                    pass
+                finally:
+                    disconnect_loop.close()
+            
+            # Stop async loop
+            if self.loop:
+                self.loop.call_soon_threadsafe(self.loop.stop)
+            
+            # Destroy window
+            self.root.destroy()
+            #self.Log("✅ Application closed")
 
 # ============================================================================
 # Main

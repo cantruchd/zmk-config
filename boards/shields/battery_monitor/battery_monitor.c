@@ -39,8 +39,8 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // NTC
 #define NTC_REFERENCE_MV      3300
-#define NTC_SERIES_RESISTOR   10000
-#define NTC_NOMINAL_RESISTANCE 10000
+#define NTC_SERIES_RESISTOR   26650
+#define NTC_NOMINAL_RESISTANCE 442000
 #define NTC_NOMINAL_TEMP      25.0
 #define NTC_B_COEFFICIENT     3950
 
@@ -825,11 +825,11 @@ static int battery_level_listener(const zmk_event_t *eh) {
     // Auto MOSFET control
     check_auto_mosfet(percent);
     
-    // Storage mode (always active)
-    if (percent <= auto_settings.storage_percent && power_state) {
-        LOG_WRN("Storage mode at %d%%", percent);
-        set_power_state(false);
-    }
+    // // Storage mode (always active)
+    // if (percent <= auto_settings.storage_percent && power_state) {
+    //     LOG_WRN("Storage mode at %d%%", percent);
+    //     set_power_state(false);
+    // }
     
     // Warnings
     if (percent <= 35 && percent > 20) {
