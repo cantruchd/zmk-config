@@ -98,20 +98,7 @@ kscan0: kscan {
     status = "okay";
 };
 
-/*
- * Pin Usage Summary:
- * 
- * BAT+  - Battery positive (Cell 1+ or Cell 2+ depending on board)
- * GND   - Battery negative (Cell 1- for board #1, Cell 1+ for board #2)
- * P0.24 - MOSFET gate control (D5, output, with external 10kΩ pull-down)
- * P0.17 - Bond clear button (D2, input with pull-up, active low)
- * P0.31 - Battery sense power control (built-in, managed by ZMK)
- * 
- * Notes:
- * - Only nice!nano #1 needs MOSFET connected to P0.24
- * - Both boards report battery independently via Bluetooth
- * - P0.17 bond clear button: Press to clear bonds (handled via ZMK keymap)
- */
+
 
  / {
     zephyr,user {
@@ -124,12 +111,12 @@ kscan0: kscan {
     #size-cells = <0>;
     status = "okay";
 
-    channel@4 {
-        reg = <4>;  // AIN4
+    channel@7 {  // ✅ AIN7 channel
+        reg = <7>;  // ✅ ADC channel 7
         zephyr,gain = "ADC_GAIN_1_6";
         zephyr,reference = "ADC_REF_INTERNAL";
         zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
-        zephyr,input-positive = <NRF_SAADC_AIN4>;  // P0.28
+        zephyr,input-positive = <NRF_SAADC_AIN7>;  // ✅ P0.31 (A3)
         zephyr,resolution = <12>;
     };
 };
