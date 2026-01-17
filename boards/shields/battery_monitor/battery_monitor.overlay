@@ -111,12 +111,12 @@ kscan0: kscan {
     #size-cells = <0>;
     status = "okay";
 
-    channel@7 {  // ✅ AIN7 channel
-        reg = <7>;  // ✅ ADC channel 7
+    channel@2 {  // ✅ AIN7 channel
+        reg = <2>;  // ✅ ADC channel 7
         zephyr,gain = "ADC_GAIN_1_6";
         zephyr,reference = "ADC_REF_INTERNAL";
         zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
-        zephyr,input-positive = <NRF_SAADC_AIN7>;  // ✅ P0.31 (A3)
+        zephyr,input-positive = <NRF_SAADC_AIN2>;  
         zephyr,resolution = <12>;
     };
 };
