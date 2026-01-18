@@ -394,7 +394,7 @@ static int settings_apply_loaded(void) {
     
     // Apply settings with current battery level
     LOG_INF("🔋 Applying auto MOSFET rules...");
-    check_auto_mosfet(last_battery_percent);
+    //check_auto_mosfet(last_battery_percent);
     
     LOG_INF("✅ All settings applied successfully");
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
