@@ -778,12 +778,7 @@ static void update_all_sensors(void) {
     
     read_battery_voltage();
 
-    // ⭐ THÊM DÒNG NÀY
-    uint8_t current_percent = read_battery_percent();
-    if (current_percent != last_battery_percent) {
-        last_battery_percent = current_percent;
-        check_auto_mosfet(current_percent);  // Kiểm tra auto MOSFET
-    }
+
     
     // Check temperature protection
     check_temp_protection();
