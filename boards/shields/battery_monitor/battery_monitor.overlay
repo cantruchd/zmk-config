@@ -102,7 +102,7 @@ kscan0: kscan {
 
  / {
     zephyr,user {
-        io-channels = <&adc 0>;  // AIN4 = P0.28 = A4 on nice!nano
+        io-channels = <&adc 5>; 
     };
 };
 
