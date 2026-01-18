@@ -134,7 +134,36 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define CMD_RESET_DEVICE     0x52
 
 
+static uint8_t read_battery_percent(void) {
+    const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
+    
+    if (!device_is_ready(battery)) {
+        LOG_WRN("Battery sensor not ready");
+        return last_battery_percent;
+    }
 
+    int rc = sensor_sample_fetch(battery);
+    if (rc != 0) {
+        LOG_WRN("Failed to fetch battery: %d", rc);
+        return last_battery_percent;
+    }
+
+    struct sensor_value state_of_charge;
+    
+    // Thử đọc state of charge
+    rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_STATE_OF_CHARGE, &state_of_charge);
+    
+    if (rc == 0) {
+        uint8_t percent = (uint8_t)state_of_charge.val1;
+        if (percent > 100) percent = 100;
+        
+        LOG_INF("Battery: %d%%", percent);
+        return percent;
+    } else {
+        LOG_DBG("State of charge not available: %d", rc);
+        return last_battery_percent;
+    }
+}
 
 
 // ============================================================================
@@ -1094,36 +1123,7 @@ static ssize_t read_temp_external(struct bt_conn *conn, const struct bt_gatt_att
 // Battery Percentage
 // ============================================================================
 
-static uint8_t read_battery_percent(void) {
-    const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
-    
-    if (!device_is_ready(battery)) {
-        LOG_WRN("Battery sensor not ready");
-        return last_battery_percent;
-    }
 
-    int rc = sensor_sample_fetch(battery);
-    if (rc != 0) {
-        LOG_WRN("Failed to fetch battery: %d", rc);
-        return last_battery_percent;
-    }
-
-    struct sensor_value state_of_charge;
-    
-    // Thử đọc state of charge
-    rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_STATE_OF_CHARGE, &state_of_charge);
-    
-    if (rc == 0) {
-        uint8_t percent = (uint8_t)state_of_charge.val1;
-        if (percent > 100) percent = 100;
-        
-        LOG_INF("Battery: %d%%", percent);
-        return percent;
-    } else {
-        LOG_DBG("State of charge not available: %d", rc);
-        return last_battery_percent;
-    }
-}
 
 
 static ssize_t read_voltage(struct bt_conn *conn, const struct bt_gatt_attr *attr,
