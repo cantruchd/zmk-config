@@ -133,7 +133,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define CMD_ENTER_BOOTLOADER 0x42
 #define CMD_RESET_DEVICE     0x52
 
-int last_battery_percent = 100;
+static uint8_t last_battery_percent = 100;
 
 static uint8_t read_battery_percent(void) {
     const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
@@ -243,7 +243,7 @@ static const struct device *gpio_dev;
 static const struct device *temp_dev;
 static const struct device *battery_dev;
 static bool power_state = false;
-static uint8_t last_battery_percent = 100;
+
 
 static int16_t temp_internal = 0;
 static int16_t temp_external = 0;
