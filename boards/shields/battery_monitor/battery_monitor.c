@@ -133,6 +133,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define CMD_ENTER_BOOTLOADER 0x42
 #define CMD_RESET_DEVICE     0x52
 
+int last_battery_percent = 100;
 
 static uint8_t read_battery_percent(void) {
     const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
