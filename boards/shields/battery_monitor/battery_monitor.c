@@ -73,7 +73,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 
 // Connection management
-#define MAX_CONNECTIONS 10
+#define MAX_CONNECTIONS 4
 #define BOND_ALIAS_MAX_LEN 32
 
 // ============================================================================
