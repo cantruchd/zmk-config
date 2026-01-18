@@ -135,36 +135,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 static uint8_t last_battery_percent = 100;
 
-static uint8_t read_battery_percent(void) {
-    const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
-    
-    if (!device_is_ready(battery)) {
-        LOG_WRN("Battery sensor not ready");
-        return last_battery_percent;
-    }
 
-    int rc = sensor_sample_fetch(battery);
-    if (rc != 0) {
-        LOG_WRN("Failed to fetch battery: %d", rc);
-        return last_battery_percent;
-    }
-
-    struct sensor_value state_of_charge;
-    
-    // Thử đọc state of charge
-    rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_STATE_OF_CHARGE, &state_of_charge);
-    
-    if (rc == 0) {
-        uint8_t percent = (uint8_t)state_of_charge.val1;
-        if (percent > 100) percent = 100;
-        
-        LOG_INF("Battery: %d%%", percent);
-        return percent;
-    } else {
-        LOG_DBG("State of charge not available: %d", rc);
-        return last_battery_percent;
-    }
-}
 
 
 // ============================================================================
@@ -869,20 +840,20 @@ static int battery_level_listener(const zmk_event_t *eh) {
     // }
     
     // Warnings
-    if (percent <= 35 && percent > 20) {
-        if (last_battery_percent > 35) {
-            LOG_WRN("Battery low: %d%%", percent);
-        }
-    }
+    // if (percent <= 35 && percent > 20) {
+    //     if (last_battery_percent > 35) {
+    //         LOG_WRN("Battery low: %d%%", percent);
+    //     }
+    // }
     
-    if (percent <= 20) {
-        if (last_battery_percent > 20) {
-            LOG_ERR("Battery critical: %d%%", percent);
-        }
-        if (power_state) {
-            set_power_state(false);
-        }
-    }
+    // if (percent <= 20) {
+    //     if (last_battery_percent > 20) {
+    //         LOG_ERR("Battery critical: %d%%", percent);
+    //     }
+    //     if (power_state) {
+    //         set_power_state(false);
+    //     }
+    // }
     
     last_battery_percent = percent;
     return 0;
