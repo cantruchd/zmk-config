@@ -282,6 +282,136 @@ static ssize_t write_bond_management(struct bt_conn *conn, const struct bt_gatt_
                                       
 static void switch_to_next_available_profile(void);
 
+
+static int settings_set_all(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
+    const char *next;
+    
+    // Battery settings
+    if (settings_name_steq(name, "cfg", &next) && !next) {
+        if (len != 9) return -EINVAL;
+        
+        uint8_t data[9];
+        if (read_cb(cb_arg, data, sizeof(data)) != sizeof(data)) {
+            return -EINVAL;
+        }
+        
+        auto_settings.auto_on_enabled = (data[0] != 0);
+        auto_settings.auto_off_enabled = (data[1] != 0);
+        auto_settings.auto_on_percent = data[2];
+        auto_settings.auto_off_percent = data[3];
+        auto_settings.storage_percent = data[4];
+        auto_settings.reverse_off_enabled = (data[5] != 0);
+        auto_settings.reverse_off_percent = data[6];
+        auto_settings.reverse_on_enabled = (data[7] != 0);
+        auto_settings.reverse_on_percent = data[8];
+        
+        LOG_DBG("Loaded battery settings from NVS");  // ⭐ Đổi thành DBG
+        return 0;
+    }
+    
+    // Temperature settings
+    if (settings_name_steq(name, "temp", &next) && !next) {
+        if (len != 12) return -EINVAL;
+        
+        uint8_t data[12];
+        if (read_cb(cb_arg, data, sizeof(data)) != sizeof(data)) {
+            return -EINVAL;
+        }
+        
+        temp_settings.int_high_enabled = (data[0] != 0);
+        temp_settings.int_high_threshold = (int16_t)((data[1] << 8) | data[2]);
+        temp_settings.int_low_enabled = (data[3] != 0);
+        temp_settings.int_low_threshold = (int16_t)((data[4] << 8) | data[5]);
+        temp_settings.ext_high_enabled = (data[6] != 0);
+        temp_settings.ext_high_threshold = (int16_t)((data[7] << 8) | data[8]);
+        temp_settings.ext_low_enabled = (data[9] != 0);
+        temp_settings.ext_low_threshold = (int16_t)((data[10] << 8) | data[11]);
+        
+        LOG_DBG("Loaded temperature settings from NVS");  // ⭐ Đổi thành DBG
+        return 0;
+    }
+    
+    // Bond aliases
+    if (settings_name_steq(name, "bonds", &next) && !next) {
+        if (len > sizeof(bond_list)) {
+            return -EINVAL;
+        }
+        
+        if (read_cb(cb_arg, bond_list, len) != len) {
+            return -EINVAL;
+        }
+        
+        LOG_DBG("Loaded bond aliases from NVS");  // ⭐ Đổi thành DBG
+        return 0;
+    }
+    
+    return -ENOENT;
+}
+
+// ============================================================================
+// Settings Commit - Apply Loaded Settings
+// ============================================================================
+
+static int settings_commit(void) {
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    LOG_INF("⚙️  APPLYING LOADED SETTINGS FROM NVS");
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
+    // Battery settings
+    LOG_INF("📋 Battery Auto Settings:");
+    LOG_INF("   Auto ON: %s at <%d%%", 
+            auto_settings.auto_on_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.auto_on_percent);
+    LOG_INF("   Auto OFF: %s at >%d%%", 
+            auto_settings.auto_off_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.auto_off_percent);
+    LOG_INF("   Storage: %d%%", auto_settings.storage_percent);
+    LOG_INF("   Reverse OFF: %s at <%d%%", 
+            auto_settings.reverse_off_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.reverse_off_percent);
+    LOG_INF("   Reverse ON: %s at >%d%%", 
+            auto_settings.reverse_on_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.reverse_on_percent);
+    
+    // Temperature settings
+    LOG_INF("🌡️  Temperature Protection:");
+    LOG_INF("   Internal High: %s at >%d.%02d°C", 
+            temp_settings.int_high_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.int_high_threshold / 100,
+            abs(temp_settings.int_high_threshold % 100));
+    LOG_INF("   Internal Low: %s at <%d.%02d°C", 
+            temp_settings.int_low_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.int_low_threshold / 100,
+            abs(temp_settings.int_low_threshold % 100));
+    LOG_INF("   External High: %s at >%d.%02d°C", 
+            temp_settings.ext_high_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.ext_high_threshold / 100,
+            abs(temp_settings.ext_high_threshold % 100));
+    LOG_INF("   External Low: %s at <%d.%02d°C", 
+            temp_settings.ext_low_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.ext_low_threshold / 100,
+            abs(temp_settings.ext_low_threshold % 100));
+    
+    // Apply settings with current battery level
+    LOG_INF("🔋 Applying auto MOSFET rules...");
+    check_auto_mosfet(last_battery_percent);
+    
+    LOG_INF("✅ All settings applied successfully");
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
+    return 0;
+}
+
+// Line ~340 (sau settings_commit)
+SETTINGS_STATIC_HANDLER_DEFINE(
+    battery_monitor,    // Handler name
+    SETTINGS_NAME,      // "btmon"
+    NULL,               // Init callback
+    settings_set_all,   // Set callback (load from NVS)
+    settings_commit,    // ⭐ Commit callback (apply after load)
+    NULL                // Export callback
+);
+
 // ============================================================================
 // Settings Management (using Zephyr Settings API like ZMK Studio)
 // ============================================================================
@@ -372,7 +502,7 @@ static int settings_set(const char *name, size_t len, settings_read_cb read_cb, 
     return -ENOENT;
 }
 
-SETTINGS_STATIC_HANDLER_DEFINE(battery_monitor, SETTINGS_NAME, NULL, settings_set, NULL, NULL);
+// SETTINGS_STATIC_HANDLER_DEFINE(battery_monitor, SETTINGS_NAME, NULL, settings_set, NULL, NULL);
 
 static int save_battery_settings(void) {
     uint8_t data[9];
@@ -1439,7 +1569,7 @@ static int settings_set_bonds(const char *name, size_t len, settings_read_cb rea
     return -ENOENT;
 }
 
-SETTINGS_STATIC_HANDLER_DEFINE(bond_aliases, SETTINGS_NAME, NULL, settings_set_bonds, NULL, NULL);
+// SETTINGS_STATIC_HANDLER_DEFINE(bond_aliases, SETTINGS_NAME, NULL, settings_set_bonds, NULL, NULL);
 
 static int save_bond_aliases(void) {
     int rc = settings_save_one(SETTINGS_NAME "/bonds", bond_list, sizeof(bond_list));
