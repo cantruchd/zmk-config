@@ -352,7 +352,7 @@ static int settings_set_all(const char *name, size_t len, settings_read_cb read_
 // Settings Commit - Apply Loaded Settings
 // ============================================================================
 
-static int settings_commit(void) {
+static int settings_apply_loaded(void) {
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     LOG_INF("⚙️  APPLYING LOADED SETTINGS FROM NVS");
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -408,7 +408,7 @@ SETTINGS_STATIC_HANDLER_DEFINE(
     SETTINGS_NAME,      // "btmon"
     NULL,               // Init callback
     settings_set_all,   // Set callback (load from NVS)
-    settings_commit,    // ⭐ Commit callback (apply after load)
+    settings_apply_loaded,    // ⭐ Commit callback (apply after load)
     NULL                // Export callback
 );
 
