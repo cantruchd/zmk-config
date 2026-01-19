@@ -113,7 +113,7 @@ kscan0: kscan {
 };
 */
 
-
+/*
  / {
     zephyr,user {
         io-channels = <&adc 5>; 
@@ -134,3 +134,6 @@ kscan0: kscan {
         zephyr,resolution = <12>;
     };
 };
+
+
+*/
