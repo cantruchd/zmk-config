@@ -127,9 +127,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
     BT_UUID_DECLARE_128(BT_UUID_BOND_MANAGEMENT_VAL)
 
 
-// ⭐ CRITICAL: Enable event manager to dispatch to this listener
-#define ZMK_EV_EVENT_TYPE(ev) zmk_battery_state_changed
-#define ZMK_EV_EVENT_LIST_ITEM(ev) ZMK_LISTENER_CB(battery_monitor, ev)
+
 
 
 // Commands
@@ -1068,6 +1066,10 @@ static int battery_level_listener(const zmk_event_t *eh) {
 
 ZMK_LISTENER(battery_monitor, battery_level_listener);
 ZMK_SUBSCRIPTION(battery_monitor, zmk_battery_state_changed);
+
+// ⭐ CRITICAL: Enable event manager to dispatch to this listener
+#define ZMK_EV_EVENT_TYPE(ev) zmk_battery_state_changed
+#define ZMK_EV_EVENT_LIST_ITEM(ev) ZMK_LISTENER_CB(battery_monitor, ev)
 
 
 // ===========================================================================
