@@ -958,7 +958,7 @@ static void force_battery_update(void) {
                     
                     // ⭐ CRITICAL: Manually trigger state_of_charge calculation
                     struct sensor_value soc;
-                    rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_STATE_OF_CHARGE, &soc);
+                    int rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_STATE_OF_CHARGE, &soc);
                     if (rc == 0) {
                         uint8_t new_percent = soc.val1;
                         
