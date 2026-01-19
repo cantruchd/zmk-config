@@ -919,6 +919,8 @@ static void update_all_sensors(void) {
     // Check temperature protection
     check_temp_protection();
 
+    zmk_battery_update();
+
     last_battery_percent = zmk_battery_state_of_charge();
     
 
