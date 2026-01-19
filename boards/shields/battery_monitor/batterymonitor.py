@@ -25,6 +25,8 @@ TEMP_EXTERNAL_UUID = "12345678-1234-5678-1234-56789abcdef5"
 AUTO_SETTINGS_UUID = "12345678-1234-5678-1234-56789abcdef6"
 TEMP_SETTINGS_UUID = "12345678-1234-5678-1234-56789abcdef7"
 BOND_MANAGEMENT_UUID = "12345678-1234-5678-1234-56789abcdef8"
+# Line ~23 - Thêm UUID
+BOOTLOADER_UUID = "12345678-1234-5678-1234-56789abcdef4"
 
 # Standard Battery Service
 BATTERY_SERVICE_UUID = "0000180f-0000-1000-8000-00805f9b34fb"
@@ -1131,7 +1133,7 @@ class BatteryMonitorGUI:
         """Reset the device"""
         if messagebox.askyesno("Confirm", "Are you sure you want to reset the device?"):
             async def reset():
-                await self.ble.client.write_gatt_char(POWER_CONTROL_UUID, bytes([CMD_RESET_DEVICE]))
+                await self.ble.client.write_gatt_char(BOOTLOADER_UUID, bytes([CMD_RESET_DEVICE]))
                 self.log("🔄 Device reset command sent")
             
             self.run_async(reset())
