@@ -43,6 +43,7 @@ default_transform: keymap_transform_0 {
 /*
  * Kscan - chỉ có 1 physical button nhưng khai báo 100 virtual positions
  */
+ /*
 kscan0: kscan {
     compatible = "zmk,kscan-gpio-direct";
     label = "KSCAN";
@@ -53,7 +54,7 @@ kscan0: kscan {
     debounce-period = <10>;
 };
 
-
+*/
 
     /*
      * Battery voltage sensing using nice!nano built-in divider
