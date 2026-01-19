@@ -61,9 +61,12 @@ kscan0: kscan {
      * Each board automatically monitors its connected cell (3.0-4.2V)
      * No external voltage divider needed!
      */
+/*
     vbatt: vbatt {
         compatible = "zmk,battery-nrf-vddh";
     }; 
+
+*/
 
     /*
      * MOSFET control for battery power switching
