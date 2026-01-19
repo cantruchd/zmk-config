@@ -126,6 +126,12 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define BT_UUID_BOND_MANAGEMENT \
     BT_UUID_DECLARE_128(BT_UUID_BOND_MANAGEMENT_VAL)
 
+
+/ ⭐ CRITICAL: Enable event manager to dispatch to this listener
+#define ZMK_EV_EVENT_TYPE(ev) zmk_battery_state_changed
+#define ZMK_EV_EVENT_LIST_ITEM(ev) ZMK_LISTENER_CB(battery_monitor, ev)
+
+
 // Commands
 #define CMD_POWER_OFF    0x00
 #define CMD_POWER_ON     0x01
@@ -1758,7 +1764,7 @@ static int battery_monitor_init(void) {
     memset(active_conns, 0, sizeof(active_conns));
     refresh_bond_list();
     
-
+    last_battery_percent = zmk_battery_state_of_charge();
  
 
 
