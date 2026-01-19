@@ -937,7 +937,7 @@ static uint8_t voltage_to_percent(uint16_t voltage_mv) {
     return 0;
 }
 
-extern int zmk_battery_init(const struct device *dev);
+
 
 
 
@@ -968,10 +968,8 @@ static void force_battery_update(void) {
                             }
                         }
                 
-            }
+            }        
         
-        // Trong update handler
-        zmk_battery_init(DEVICE_DT_GET(DT_CHOSEN(zmk_battery)));
         
         // ⭐ CRITICAL: Manually raise ZMK battery event
         struct zmk_battery_state_changed ev = {
