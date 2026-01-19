@@ -91,17 +91,27 @@ kscan0: kscan {
 /*
  * Enable ADC for battery monitoring
  */
+
+
+/*
+
+
 &adc {
     status = "okay";
 };
+*/
+
+
 
 /*
  * Enable temperature sensor (nRF52840 internal)
  */
+
+ /*
 &temp {
     status = "okay";
 };
-
+*/
 
 
  / {
