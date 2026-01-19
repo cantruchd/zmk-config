@@ -901,6 +901,70 @@ static void check_auto_mosfet(uint8_t percent) {
 // Sensors Update
 // ============================================================================
 
+/ ============================================================================
+// Battery Voltage to Percentage Conversion
+// ============================================================================
+
+// LiPo voltage curve (typical for single cell)
+static uint8_t voltage_to_percent(uint16_t voltage_mv) {
+    // Lookup table for more accurate conversion
+    static const struct {
+        uint16_t mv;
+        uint8_t pct;
+    } curve[] = {
+        {4200, 100}, {4150, 95}, {4110, 90}, {4080, 85}, {4020, 80},
+        {3980, 75},  {3950, 70}, {3910, 65}, {3870, 60}, {3850, 55},
+        {3840, 50},  {3820, 45}, {3800, 40}, {3790, 35}, {3770, 30},
+        {3750, 25},  {3730, 20}, {3710, 15}, {3690, 10}, {3610, 5},
+        {3400, 0}
+    };
+    
+    // Handle bounds
+    if (voltage_mv >= curve[0].mv) return curve[0].pct;
+    if (voltage_mv <= curve[20].mv) return curve[20].pct;
+    
+    // Linear interpolation between points
+    for (int i = 0; i < 20; i++) {
+        if (voltage_mv >= curve[i + 1].mv) {
+            uint16_t v_high = curve[i].mv;
+            uint16_t v_low = curve[i + 1].mv;
+            uint8_t p_high = curve[i].pct;
+            uint8_t p_low = curve[i + 1].pct;
+            
+            // Linear interpolation
+            return p_low + ((voltage_mv - v_low) * (p_high - p_low)) / (v_high - v_low);
+        }
+    }
+    
+    return 0;
+}
+
+// Force battery state update and raise event
+static void force_battery_update(void) {
+    if (current_voltage_mv == 0) return;
+    
+    uint8_t new_percent = voltage_to_percent(current_voltage_mv);
+    
+    if (new_percent != last_battery_percent) {
+        LOG_INF("🔋 Battery: %d%% (%d mV)", new_percent, current_voltage_mv);
+        
+        // ⭐ CRITICAL: Manually raise ZMK battery event
+        struct zmk_battery_state_changed ev = {
+            .state_of_charge = new_percent,
+            .timestamp = k_uptime_get()
+        };
+        
+        // This will trigger battery_level_listener()
+        raise_zmk_battery_state_changed(ev);
+        
+        last_battery_percent = new_percent;
+        check_auto_mosfet(new_percent);
+    }
+}
+
+
+
+
 static void update_all_sensors(void) {
     temp_internal = read_internal_temp();
     int temp_int_int = temp_internal / 100;
@@ -914,12 +978,14 @@ static void update_all_sensors(void) {
     
     read_battery_voltage();
 
+    // Force battery update
+    force_battery_update();
 
     
     // Check temperature protection
     check_temp_protection();
 
-    zmk_battery_update();
+    
 
     last_battery_percent = zmk_battery_state_of_charge();
     
