@@ -950,8 +950,7 @@ static void force_battery_update(void) {
         
         // ⭐ CRITICAL: Manually raise ZMK battery event
         struct zmk_battery_state_changed ev = {
-            .state_of_charge = new_percent,
-            .timestamp = k_uptime_get()
+            .state_of_charge = new_percent            
         };
         
         // This will trigger battery_level_listener()
