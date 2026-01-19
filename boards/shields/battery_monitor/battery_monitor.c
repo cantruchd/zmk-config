@@ -918,6 +918,12 @@ static void update_all_sensors(void) {
     
     // Check temperature protection
     check_temp_protection();
+
+    last_battery_percent = zmk_battery_state_of_charge();
+    
+
+
+    LOG_INF("Battery: %d%%", last_battery_percent);
     
     // bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], &temp_internal, sizeof(temp_internal));
     // bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], &current_voltage_mv, sizeof(current_voltage_mv));
