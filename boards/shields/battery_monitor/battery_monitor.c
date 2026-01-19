@@ -949,16 +949,12 @@ static void force_battery_update(void) {
     
     if (new_percent != last_battery_percent) {
         LOG_INF("🔋 Battery: %d%% (%d mV)", new_percent, current_voltage_mv);
-
+    }
         // Method 2: Nếu method 1 không compile, dùng sensor fetch
         const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
         if (device_is_ready(battery)) {
-            int rc = sensor_sample_fetch(battery);
-            if (rc == 0) {
-                struct sensor_value voltage;
-                rc = sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage);
-                if (rc == 0) {
-                    current_voltage_mv = (voltage.val1 * 1000) + (voltage.val2 / 1000);
+        
+               
                     
                     // ⭐ CRITICAL: Manually trigger state_of_charge calculation
                     struct sensor_value soc;
@@ -969,7 +965,11 @@ static void force_battery_update(void) {
                         if (new_percent != last_battery_percent) {
                             LOG_INF("🔋 Battery updated: %d%% (%d mV)", 
                                     new_percent, current_voltage_mv);
-
+                            }
+                        }
+                
+            }
+        
         // Trong update handler
         zmk_battery_init(DEVICE_DT_GET(DT_CHOSEN(zmk_battery)));
         
@@ -983,8 +983,8 @@ static void force_battery_update(void) {
         
         last_battery_percent = new_percent;
         check_auto_mosfet(new_percent);
-    }
 }
+
 
 
 
