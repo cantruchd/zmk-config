@@ -980,6 +980,9 @@ static void force_battery_update(void) {
         raise_zmk_battery_state_changed(ev);
         
         last_battery_percent = new_percent;
+
+        last_battery_percent = zmk_battery_state_of_charge();
+
         check_auto_mosfet(new_percent);
 }
 

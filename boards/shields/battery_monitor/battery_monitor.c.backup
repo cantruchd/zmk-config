@@ -39,9 +39,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // NTC
 #define NTC_REFERENCE_MV      3300
-#define NTC_SERIES_RESISTOR   10000
-#define NTC_NOMINAL_RESISTANCE 10000
-#define NTC_NOMINAL_TEMP      25.0
+#define NTC_SERIES_RESISTOR   26620
+#define NTC_NOMINAL_RESISTANCE 40700
+#define NTC_NOMINAL_TEMP      29.5
 #define NTC_B_COEFFICIENT     3950
 
 // Defaults - Battery
@@ -71,9 +71,30 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // Settings key (stored as "btmon/cfg" in NVS)
 #define SETTINGS_NAME "btmon"
 
+
+// Connection management
+#define MAX_CONNECTIONS 4
+#define BOND_ALIAS_MAX_LEN 32
+
 // ============================================================================
 // BLE UUIDs
 // ============================================================================
+
+// ============================================================================
+// Standard BLE UUIDs (Bluetooth SIG)
+// ============================================================================
+
+// Battery Service (0x180F) - Standard Bluetooth SIG
+#define BT_UUID_BAS_VAL 0x180F
+#define BT_UUID_BAS \
+    BT_UUID_DECLARE_16(BT_UUID_BAS_VAL)
+
+// Battery Level Characteristic (0x2A19) - Standard Bluetooth SIG
+#define BT_UUID_BAS_BATTERY_LEVEL_VAL 0x2A19
+#define BT_UUID_BAS_BATTERY_LEVEL \
+    BT_UUID_DECLARE_16(BT_UUID_BAS_BATTERY_LEVEL_VAL)
+
+
 
 #define BT_UUID_CUSTOM_SERVICE_VAL \
     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef0)
@@ -115,12 +136,51 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define BT_UUID_TEMP_SETTINGS \
     BT_UUID_DECLARE_128(BT_UUID_TEMP_SETTINGS_VAL)
 
+
+#define BT_UUID_BOND_MANAGEMENT_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef8)
+#define BT_UUID_BOND_MANAGEMENT \
+    BT_UUID_DECLARE_128(BT_UUID_BOND_MANAGEMENT_VAL)
+
+
+
+
+
 // Commands
 #define CMD_POWER_OFF    0x00
 #define CMD_POWER_ON     0x01
 #define CMD_POWER_TOGGLE 0x02
 #define CMD_ENTER_BOOTLOADER 0x42
 #define CMD_RESET_DEVICE     0x52
+
+static uint8_t last_battery_percent = 100;
+
+
+
+
+// ============================================================================
+// Multi bonds
+// ============================================================================
+struct bond_info {
+    bt_addr_le_t addr;
+    char alias[BOND_ALIAS_MAX_LEN];
+    bool is_connected;
+};
+
+struct bond_management_data {
+    uint8_t cmd;           // 0x01=list, 0x02=set_alias, 0x03=delete
+    uint8_t bond_index;    // Index của bond
+    char alias[BOND_ALIAS_MAX_LEN];
+} __packed;
+
+static struct bt_conn *active_conns[MAX_CONNECTIONS];
+static struct bond_info bond_list[CONFIG_BT_MAX_PAIRED];
+static uint8_t bond_count = 0;
+static K_MUTEX_DEFINE(conn_mutex);
+
+static void security_changed(struct bt_conn *conn, bt_security_t level,
+                             enum bt_security_err err);
+
 
 // ============================================================================
 // ADC Configuration
@@ -174,7 +234,7 @@ static const struct device *gpio_dev;
 static const struct device *temp_dev;
 static const struct device *battery_dev;
 static bool power_state = false;
-static uint8_t last_battery_percent = 100;
+
 
 static int16_t temp_internal = 0;
 static int16_t temp_external = 0;
@@ -211,6 +271,7 @@ static struct temp_protection_settings temp_settings = {
 };
 
 extern const struct bt_gatt_service_static battery_monitor_svc;
+extern const struct bt_gatt_service_static bas_svc;  // ⭐ THÊM dòng này
 
 // Forward declarations
 static ssize_t read_power_control(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -233,6 +294,199 @@ static ssize_t read_temp_settings(struct bt_conn *conn, const struct bt_gatt_att
                                    void *buf, uint16_t len, uint16_t offset);
 static ssize_t write_temp_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                     const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
+
+// THÊM 2 DÒNG NÀY:
+static ssize_t read_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                     void *buf, uint16_t len, uint16_t offset);
+static ssize_t write_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                      const void *buf, uint16_t len, uint16_t offset, uint8_t flags);     
+                                      
+static void switch_to_next_available_profile(void);
+
+
+
+// ============================================================================
+// Battery Level Handlers (Standard BLE Battery Service)
+// ============================================================================
+
+static ssize_t read_battery_level(struct bt_conn *conn, 
+                                   const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset) {
+    // ⭐ Đọc voltage và convert sang %
+    const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
+    
+    if (device_is_ready(battery)) {
+        sensor_sample_fetch(battery);
+        
+        struct sensor_value voltage;
+        if (sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage) == 0) {
+            current_voltage_mv = (voltage.val1 * 1000) + (voltage.val2 / 1000);
+            last_battery_percent = voltage_to_percent(current_voltage_mv);
+            
+            LOG_INF("📱 BLE Battery Level read: %d%% (%d mV)", 
+                    last_battery_percent, current_voltage_mv);
+        }
+    }
+    
+    // ⭐ CRITICAL: BAS battery level format là uint8 (0-100)
+    uint8_t battery_level = last_battery_percent;
+    
+    // Start auto-updates khi host đọc battery
+    start_auto_updates();
+    if (!k_work_delayable_is_pending(&update_work)) {
+        k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
+    }
+    
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, 
+                            &battery_level, sizeof(battery_level));
+}
+
+// ⭐ Notify helper function
+static void notify_battery_level(uint8_t percent) {
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            // attrs[2] sẽ là Battery Level characteristic (xem GATT definition bên dưới)
+            bt_gatt_notify(active_conns[i], &bas_svc.attrs[1], 
+                          &percent, sizeof(percent));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    LOG_INF("🔋 Battery Level notified: %d%%", percent);
+}
+
+
+
+
+static int settings_set_all(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
+    const char *next;
+    
+    // Battery settings
+    if (settings_name_steq(name, "cfg", &next) && !next) {
+        if (len != 9) return -EINVAL;
+        
+        uint8_t data[9];
+        if (read_cb(cb_arg, data, sizeof(data)) != sizeof(data)) {
+            return -EINVAL;
+        }
+        
+        auto_settings.auto_on_enabled = (data[0] != 0);
+        auto_settings.auto_off_enabled = (data[1] != 0);
+        auto_settings.auto_on_percent = data[2];
+        auto_settings.auto_off_percent = data[3];
+        auto_settings.storage_percent = data[4];
+        auto_settings.reverse_off_enabled = (data[5] != 0);
+        auto_settings.reverse_off_percent = data[6];
+        auto_settings.reverse_on_enabled = (data[7] != 0);
+        auto_settings.reverse_on_percent = data[8];
+        
+        LOG_DBG("Loaded battery settings from NVS");  // ⭐ Đổi thành DBG
+        return 0;
+    }
+    
+    // Temperature settings
+    if (settings_name_steq(name, "temp", &next) && !next) {
+        if (len != 12) return -EINVAL;
+        
+        uint8_t data[12];
+        if (read_cb(cb_arg, data, sizeof(data)) != sizeof(data)) {
+            return -EINVAL;
+        }
+        
+        temp_settings.int_high_enabled = (data[0] != 0);
+        temp_settings.int_high_threshold = (int16_t)((data[1] << 8) | data[2]);
+        temp_settings.int_low_enabled = (data[3] != 0);
+        temp_settings.int_low_threshold = (int16_t)((data[4] << 8) | data[5]);
+        temp_settings.ext_high_enabled = (data[6] != 0);
+        temp_settings.ext_high_threshold = (int16_t)((data[7] << 8) | data[8]);
+        temp_settings.ext_low_enabled = (data[9] != 0);
+        temp_settings.ext_low_threshold = (int16_t)((data[10] << 8) | data[11]);
+        
+        LOG_DBG("Loaded temperature settings from NVS");  // ⭐ Đổi thành DBG
+        return 0;
+    }
+    
+    // Bond aliases
+    if (settings_name_steq(name, "bonds", &next) && !next) {
+        if (len > sizeof(bond_list)) {
+            return -EINVAL;
+        }
+        
+        if (read_cb(cb_arg, bond_list, len) != len) {
+            return -EINVAL;
+        }
+        
+        LOG_DBG("Loaded bond aliases from NVS");  // ⭐ Đổi thành DBG
+        return 0;
+    }
+    
+    return -ENOENT;
+}
+
+// ============================================================================
+// Settings Commit - Apply Loaded Settings
+// ============================================================================
+
+static int settings_apply_loaded(void) {
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    LOG_INF("⚙️  APPLYING LOADED SETTINGS FROM NVS");
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
+    // Battery settings
+    LOG_INF("📋 Battery Auto Settings:");
+    LOG_INF("   Auto ON: %s at <%d%%", 
+            auto_settings.auto_on_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.auto_on_percent);
+    LOG_INF("   Auto OFF: %s at >%d%%", 
+            auto_settings.auto_off_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.auto_off_percent);
+    LOG_INF("   Storage: %d%%", auto_settings.storage_percent);
+    LOG_INF("   Reverse OFF: %s at <%d%%", 
+            auto_settings.reverse_off_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.reverse_off_percent);
+    LOG_INF("   Reverse ON: %s at >%d%%", 
+            auto_settings.reverse_on_enabled ? "ENABLED" : "DISABLED",
+            auto_settings.reverse_on_percent);
+    
+    // Temperature settings
+    LOG_INF("🌡️  Temperature Protection:");
+    LOG_INF("   Internal High: %s at >%d.%02d°C", 
+            temp_settings.int_high_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.int_high_threshold / 100,
+            abs(temp_settings.int_high_threshold % 100));
+    LOG_INF("   Internal Low: %s at <%d.%02d°C", 
+            temp_settings.int_low_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.int_low_threshold / 100,
+            abs(temp_settings.int_low_threshold % 100));
+    LOG_INF("   External High: %s at >%d.%02d°C", 
+            temp_settings.ext_high_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.ext_high_threshold / 100,
+            abs(temp_settings.ext_high_threshold % 100));
+    LOG_INF("   External Low: %s at <%d.%02d°C", 
+            temp_settings.ext_low_enabled ? "ENABLED" : "DISABLED",
+            temp_settings.ext_low_threshold / 100,
+            abs(temp_settings.ext_low_threshold % 100));
+    
+    // Apply settings with current battery level
+    LOG_INF("🔋 Applying auto MOSFET rules...");
+    //check_auto_mosfet(last_battery_percent);
+    
+    LOG_INF("✅ All settings applied successfully");
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
+    return 0;
+}
+
+// Line ~340 (sau settings_commit)
+SETTINGS_STATIC_HANDLER_DEFINE(
+    battery_monitor,    // Handler name
+    SETTINGS_NAME,      // "btmon"
+    NULL,               // Init callback
+    settings_set_all,   // Set callback (load from NVS)
+    settings_apply_loaded,    // ⭐ Commit callback (apply after load)
+    NULL                // Export callback
+);
 
 // ============================================================================
 // Settings Management (using Zephyr Settings API like ZMK Studio)
@@ -324,7 +578,7 @@ static int settings_set(const char *name, size_t len, settings_read_cb read_cb, 
     return -ENOENT;
 }
 
-SETTINGS_STATIC_HANDLER_DEFINE(battery_monitor, SETTINGS_NAME, NULL, settings_set, NULL, NULL);
+// SETTINGS_STATIC_HANDLER_DEFINE(battery_monitor, SETTINGS_NAME, NULL, settings_set, NULL, NULL);
 
 static int save_battery_settings(void) {
     uint8_t data[9];
@@ -603,7 +857,17 @@ static void set_power_state(bool on) {
     LOG_INF("Battery power %s", on ? "ON" : "OFF");
     
     uint8_t status = power_state ? 0x01 : 0x00;
-    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[2], &status, sizeof(status));
+    //bt_gatt_notify(NULL, &battery_monitor_svc.attrs[2], &status, sizeof(status));
+
+
+        // Notify all active connections
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[2], &status, sizeof(status));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
 }
 
 void battery_monitor_power_on(void) { set_power_state(true); }
@@ -707,6 +971,98 @@ static void check_auto_mosfet(uint8_t percent) {
 // Sensors Update
 // ============================================================================
 
+// ============================================================================
+// Battery Voltage to Percentage Conversion
+// ============================================================================
+
+// LiPo voltage curve (typical for single cell)
+static uint8_t voltage_to_percent(uint16_t voltage_mv) {
+    // Lookup table for more accurate conversion
+    static const struct {
+        uint16_t mv;
+        uint8_t pct;
+    } curve[] = {
+        {4200, 100}, {4150, 95}, {4110, 90}, {4080, 85}, {4020, 80},
+        {3980, 75},  {3950, 70}, {3910, 65}, {3870, 60}, {3850, 55},
+        {3840, 50},  {3820, 45}, {3800, 40}, {3790, 35}, {3770, 30},
+        {3750, 25},  {3730, 20}, {3710, 15}, {3690, 10}, {3610, 5},
+        {3400, 0}
+    };
+    
+    // Handle bounds
+    if (voltage_mv >= curve[0].mv) return curve[0].pct;
+    if (voltage_mv <= curve[20].mv) return curve[20].pct;
+    
+    // Linear interpolation between points
+    for (int i = 0; i < 20; i++) {
+        if (voltage_mv >= curve[i + 1].mv) {
+            uint16_t v_high = curve[i].mv;
+            uint16_t v_low = curve[i + 1].mv;
+            uint8_t p_high = curve[i].pct;
+            uint8_t p_low = curve[i + 1].pct;
+            
+            // Linear interpolation
+            return p_low + ((voltage_mv - v_low) * (p_high - p_low)) / (v_high - v_low);
+        }
+    }
+    
+    return 0;
+}
+
+
+
+
+
+// Force battery state update and raise event
+static void force_battery_update(void) {
+    if (current_voltage_mv == 0) return;
+    
+    uint8_t new_percent = voltage_to_percent(current_voltage_mv);
+    
+    if (new_percent != last_battery_percent) {
+        LOG_INF("🔋 Battery: %d%% (%d mV)", new_percent, current_voltage_mv);
+    }
+        // Method 2: Nếu method 1 không compile, dùng sensor fetch
+        const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
+        if (device_is_ready(battery)) {
+        
+               
+                    
+                    // ⭐ CRITICAL: Manually trigger state_of_charge calculation
+                    struct sensor_value soc;
+                    int rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_STATE_OF_CHARGE, &soc);
+                    if (rc == 0) {
+                        uint8_t new_percent = soc.val1;
+                        
+                        if (new_percent != last_battery_percent) {
+                            LOG_INF("🔋 Battery updated: %d%% (%d mV)", 
+                                    new_percent, current_voltage_mv);
+                            }
+                        }
+                
+            }        
+        
+        
+        // ⭐ CRITICAL: Manually raise ZMK battery event
+        struct zmk_battery_state_changed ev = {
+            .state_of_charge = new_percent            
+        };
+        
+        // This will trigger battery_level_listener()
+        raise_zmk_battery_state_changed(ev);
+        
+        last_battery_percent = new_percent;
+
+        // ⭐ Notify qua BLE Battery Service
+        notify_battery_level(new_percent);
+
+        check_auto_mosfet(new_percent);
+}
+
+
+
+
+
 static void update_all_sensors(void) {
     temp_internal = read_internal_temp();
     int temp_int_int = temp_internal / 100;
@@ -719,13 +1075,39 @@ static void update_all_sensors(void) {
     LOG_INF("External temp: %d.%02d°C", temp_ext_int, temp_ext_frac);
     
     read_battery_voltage();
+
+    // Force battery update
+    force_battery_update();
+
     
     // Check temperature protection
     check_temp_protection();
+
     
-    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], &temp_internal, sizeof(temp_internal));
-    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], &current_voltage_mv, sizeof(current_voltage_mv));
-    bt_gatt_notify(NULL, &battery_monitor_svc.attrs[11], &temp_external, sizeof(temp_external));
+
+    
+    
+
+
+    LOG_INF("Battery: %d%%", last_battery_percent);
+    
+    // bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], &temp_internal, sizeof(temp_internal));
+    // bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], &current_voltage_mv, sizeof(current_voltage_mv));
+    // bt_gatt_notify(NULL, &battery_monitor_svc.attrs[11], &temp_external, sizeof(temp_external));
+
+    // Notify all active connections
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            // bt_gatt_notify(active_conns[i], attr, data, len);
+            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[5], &temp_internal, sizeof(temp_internal));
+            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[8], &current_voltage_mv, sizeof(current_voltage_mv));
+            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[11], &temp_external, sizeof(temp_external));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+
+
 }
 
 static void update_work_handler(struct k_work *work) {
@@ -749,32 +1131,35 @@ static int battery_level_listener(const zmk_event_t *eh) {
     if (ev == NULL) return 0;
     
     uint8_t percent = ev->state_of_charge;
+
+    uint8_t percent2 = zmk_battery_state_of_charge();
     LOG_INF("Battery: %d%%", percent);
+    LOG_INF("Battery (from API): %d%%", percent2);
     
     // Auto MOSFET control
     check_auto_mosfet(percent);
     
-    // Storage mode (always active)
-    if (percent <= auto_settings.storage_percent && power_state) {
-        LOG_WRN("Storage mode at %d%%", percent);
-        set_power_state(false);
-    }
+    // // Storage mode (always active)
+    // if (percent <= auto_settings.storage_percent && power_state) {
+    //     LOG_WRN("Storage mode at %d%%", percent);
+    //     set_power_state(false);
+    // }
     
     // Warnings
-    if (percent <= 35 && percent > 20) {
-        if (last_battery_percent > 35) {
-            LOG_WRN("Battery low: %d%%", percent);
-        }
-    }
+    // if (percent <= 35 && percent > 20) {
+    //     if (last_battery_percent > 35) {
+    //         LOG_WRN("Battery low: %d%%", percent);
+    //     }
+    // }
     
-    if (percent <= 20) {
-        if (last_battery_percent > 20) {
-            LOG_ERR("Battery critical: %d%%", percent);
-        }
-        if (power_state) {
-            set_power_state(false);
-        }
-    }
+    // if (percent <= 20) {
+    //     if (last_battery_percent > 20) {
+    //         LOG_ERR("Battery critical: %d%%", percent);
+    //     }
+    //     if (power_state) {
+    //         set_power_state(false);
+    //     }
+    // }
     
     last_battery_percent = percent;
     return 0;
@@ -782,6 +1167,175 @@ static int battery_level_listener(const zmk_event_t *eh) {
 
 ZMK_LISTENER(battery_monitor, battery_level_listener);
 ZMK_SUBSCRIPTION(battery_monitor, zmk_battery_state_changed);
+
+// ⭐ CRITICAL: Enable event manager to dispatch to this listener
+#define ZMK_EV_EVENT_TYPE(ev) zmk_battery_state_changed
+#define ZMK_EV_EVENT_LIST_ITEM(ev) ZMK_LISTENER_CB(battery_monitor, ev)
+
+
+// ===========================================================================
+// multibond
+// ==========================================================================
+// ============================================================================
+// Connection Management
+// ============================================================================
+
+// ============================================================================
+// Connection Management
+// ============================================================================
+
+// Callback for bt_foreach_bond
+static void bond_list_cb(const struct bt_bond_info *info, void *user_data) {
+    if (bond_count >= CONFIG_BT_MAX_PAIRED) {
+        return;
+    }
+    
+    memcpy(&bond_list[bond_count].addr, &info->addr, sizeof(bt_addr_le_t));
+    
+    // Check if connected
+    bond_list[bond_count].is_connected = false;
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            struct bt_conn_info conn_info;
+            bt_conn_get_info(active_conns[i], &conn_info);
+            if (bt_addr_le_eq(conn_info.le.dst, &info->addr)) {
+                bond_list[bond_count].is_connected = true;
+                break;
+            }
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    bond_count++;
+}
+
+
+static void refresh_bond_list(void) {
+    // Save current aliases before refresh
+    char saved_aliases[CONFIG_BT_MAX_PAIRED][BOND_ALIAS_MAX_LEN];
+    bt_addr_le_t saved_addrs[CONFIG_BT_MAX_PAIRED];
+    
+    // Backup aliases
+    for (int i = 0; i < CONFIG_BT_MAX_PAIRED; i++) {
+        memcpy(saved_aliases[i], bond_list[i].alias, BOND_ALIAS_MAX_LEN);
+        memcpy(&saved_addrs[i], &bond_list[i].addr, sizeof(bt_addr_le_t));
+    }
+    
+    bond_count = 0;
+    memset(bond_list, 0, sizeof(bond_list));
+    
+    bt_foreach_bond(BT_ID_DEFAULT, bond_list_cb, NULL);
+    
+    // Restore aliases by matching addresses
+    for (int i = 0; i < bond_count; i++) {
+        for (int j = 0; j < CONFIG_BT_MAX_PAIRED; j++) {
+            if (bt_addr_le_eq(&bond_list[i].addr, &saved_addrs[j])) {
+                if (saved_aliases[j][0] != '\0') {
+                    memcpy(bond_list[i].alias, saved_aliases[j], BOND_ALIAS_MAX_LEN);
+                    LOG_DBG("Restored alias for bond %d: '%s'", i, bond_list[i].alias);
+                }
+                break;
+            }
+        }
+    }
+    
+    LOG_INF("Bond list refreshed: %d bonds", bond_count);
+}
+
+
+static void add_connection(struct bt_conn *conn) {
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i] == NULL) {
+            active_conns[i] = bt_conn_ref(conn);
+            LOG_INF("Connection added at slot %d", i);
+            break;
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+}
+
+static void remove_connection(struct bt_conn *conn) {
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i] == conn) {
+            bt_conn_unref(active_conns[i]);
+            active_conns[i] = NULL;
+            LOG_INF("Connection removed from slot %d", i);
+            break;
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+}
+
+static void connected_cb(struct bt_conn *conn, uint8_t err) {
+    if (err) {
+        LOG_ERR("Connection failed: %u", err);
+        return;
+    }
+    
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    LOG_INF("✅ Connected: %s", addr);
+    
+    add_connection(conn);
+    refresh_bond_list();
+    
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    int active_count = 0;
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i] != NULL) {
+            active_count++;
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    LOG_INF("📊 Active connections: %d/%d (Profile: %d)", 
+            active_count, MAX_CONNECTIONS, zmk_ble_active_profile_index());
+}
+
+static void disconnected_cb(struct bt_conn *conn, uint8_t reason) {
+    char addr[BT_ADDR_LE_STR_LEN];
+    bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    
+    const char *reason_str;
+    switch (reason) {
+        case 0x13: reason_str = "Remote user terminated"; break;
+        case 0x16: reason_str = "Local host terminated"; break;
+        case 0x08: reason_str = "Connection timeout"; break;
+        default: reason_str = "Unknown"; break;
+    }
+    
+    LOG_INF("🔌 Disconnected: %s (0x%02X: %s)", addr, reason, reason_str);
+    
+    remove_connection(conn);
+    refresh_bond_list();
+    
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    int active_count = 0;
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i] != NULL) {
+            active_count++;
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    LOG_INF("📊 Connections after disconnect: %d/%d", active_count, MAX_CONNECTIONS);
+    
+    // Auto-switch to next available profile if no connections
+    if (active_count == 0) {
+        LOG_INF("🔄 No active connections - switching to next profile");
+        switch_to_next_available_profile();
+    }
+}
+
+BT_CONN_CB_DEFINE(conn_callbacks) = {
+    .connected = connected_cb,
+    .disconnected = disconnected_cb,
+};
+
+
 
 // ============================================================================
 // BLE GATT Handlers
@@ -845,6 +1399,14 @@ static ssize_t read_temp_external(struct bt_conn *conn, const struct bt_gatt_att
     
     return bt_gatt_attr_read(conn, attr, buf, len, offset, &temp_external, sizeof(temp_external));
 }
+
+// Thêm sau hàm read_battery_voltage() - Line ~590
+// ============================================================================
+// Battery Percentage
+// ============================================================================
+
+
+
 
 static ssize_t read_voltage(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                              void *buf, uint16_t len, uint16_t offset) {
@@ -976,7 +1538,16 @@ static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_at
     notify_data[7] = auto_settings.reverse_on_enabled ? 0x01 : 0x00;
     notify_data[8] = auto_settings.reverse_on_percent;
     notify_data[9] = 0x00;
-    bt_gatt_notify(NULL, attr, notify_data, sizeof(notify_data));
+    // bt_gatt_notify(NULL, attr, notify_data, sizeof(notify_data));
+
+    // Notify all active connections
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {            
+            bt_gatt_notify(active_conns[i], attr, notify_data, sizeof(notify_data));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
     
     // Apply immediately
     check_auto_mosfet(last_battery_percent);
@@ -1060,8 +1631,17 @@ static ssize_t write_temp_settings(struct bt_conn *conn, const struct bt_gatt_at
     }
     
     // Notify
-    bt_gatt_notify(NULL, attr, data, 12);
-    
+    // bt_gatt_notify(NULL, attr, data, 12);
+
+    // Notify all active connections
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            bt_gatt_notify(active_conns[i], attr, data, 12);
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+
     // Apply immediately
     check_temp_protection();
     
@@ -1071,6 +1651,24 @@ static ssize_t write_temp_settings(struct bt_conn *conn, const struct bt_gatt_at
 // ============================================================================
 // GATT Service
 // ============================================================================
+
+// ⭐ SERVICE 1: Standard Battery Service (0x180F)
+// Phải define TRƯỚC để có handle thấp (host ưu tiên scan service này)
+BT_GATT_SERVICE_DEFINE(bas_svc,
+    BT_GATT_PRIMARY_SERVICE(BT_UUID_BAS),
+    
+    // Battery Level Characteristic (0x2A19)
+    // Properties: Read + Notify (theo BLE spec)
+    BT_GATT_CHARACTERISTIC(BT_UUID_BAS_BATTERY_LEVEL,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ,
+                          read_battery_level, NULL, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+);
+
+
+
+
 
 BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
     BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
@@ -1115,7 +1713,191 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
                           BT_GATT_CHRC_WRITE,
                           BT_GATT_PERM_WRITE,
                           NULL, write_bootloader, NULL),
+
+    BT_GATT_CHARACTERISTIC(BT_UUID_BOND_MANAGEMENT,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                          read_bond_management, write_bond_management, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 );
+
+
+
+
+
+// ============================================================================
+// MULTI BOND STORAGE
+// ============================================================================
+
+
+// ============================================================================
+// Pairing Management for Multi-Connection
+// ============================================================================
+
+
+// THÊM DÒNG NÀY:
+static int save_bond_aliases(void);
+
+
+
+// ============================================================================
+// Pairing Management for Multi-Connection
+// ============================================================================
+
+// ============================================================================
+// Pairing Management for Multi-Connection
+// ============================================================================
+
+
+
+
+
+
+static int settings_set_bonds(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
+    const char *next;
+    
+    if (settings_name_steq(name, "bonds", &next) && !next) {
+        if (len > sizeof(bond_list)) {
+            return -EINVAL;
+        }
+        
+        if (read_cb(cb_arg, bond_list, len) != len) {
+            return -EINVAL;
+        }
+        
+        LOG_INF("Bond aliases loaded from NVS");
+        return 0;
+    }
+    
+    return -ENOENT;
+}
+
+// SETTINGS_STATIC_HANDLER_DEFINE(bond_aliases, SETTINGS_NAME, NULL, settings_set_bonds, NULL, NULL);
+
+static int save_bond_aliases(void) {
+    int rc = settings_save_one(SETTINGS_NAME "/bonds", bond_list, sizeof(bond_list));
+    if (rc) {
+        LOG_ERR("Failed to save bond aliases: %d", rc);
+        return rc;
+    }
+    LOG_INF("Bond aliases saved to NVS with aliases %s", bond_list[0].alias);
+    return 0;
+}
+
+
+// ============================================================================
+// Simple Profile Switching
+// ============================================================================
+
+static void switch_to_next_available_profile(void) {
+    uint8_t current_profile = zmk_ble_active_profile_index();
+    
+    LOG_INF("🔄 Current profile: %d - Searching for next available...", current_profile);
+    
+    // Try next profiles in sequence
+    for (int i = 1; i <= CONFIG_BT_MAX_PAIRED; i++) {
+        uint8_t next_profile = (current_profile + i) % CONFIG_BT_MAX_PAIRED;
+        
+        LOG_DBG("  Trying profile %d...", next_profile);
+        
+        // Switch to this profile
+        int ret = zmk_ble_prof_select(next_profile);
+        if (ret == 0) {
+            LOG_INF("✅ Switched to profile %d", next_profile);
+            
+            // Check if this profile is already connected
+            bool is_open = zmk_ble_active_profile_is_open();
+            if (is_open) {
+                LOG_INF("  Profile %d is OPEN - ready for new connections", next_profile);
+                return;
+            } else {
+                LOG_DBG("  Profile %d is already connected - trying next", next_profile);
+            }
+        } else {
+            LOG_DBG("  Profile %d: switch failed (%d)", next_profile, ret);
+        }
+    }
+    
+    LOG_WRN("⚠️  All profiles are full or in use - staying on profile %d", current_profile);
+}
+
+static ssize_t read_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                     void *buf, uint16_t len, uint16_t offset) {
+    refresh_bond_list();
+    
+    // Format: [count][bond0_data][bond1_data]...
+    // Each bond: [addr:7][alias:32][is_connected:1] = 40 bytes
+    uint8_t data[1 + (40 * CONFIG_BT_MAX_PAIRED)];
+    data[0] = bond_count;
+    
+    for (int i = 0; i < bond_count; i++) {
+        uint8_t *bond_data = &data[1 + (i * 40)];
+        memcpy(bond_data, &bond_list[i].addr, 7);
+        memcpy(bond_data + 7, bond_list[i].alias, BOND_ALIAS_MAX_LEN);
+        bond_data[39] = bond_list[i].is_connected ? 0x01 : 0x00;
+        LOG_INF("Bond list read: %d bonds WITH ALIAS %s", bond_count, bond_list[i].alias);
+    }
+    
+    
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, data, 1 + (bond_count * 40));
+}
+
+static ssize_t write_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                      const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    if (len < 2) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+    
+    const struct bond_management_data *cmd = (const struct bond_management_data *)buf;
+    
+    refresh_bond_list();
+    
+    switch (cmd->cmd) {
+        case 0x01: // List bonds (already done in read)
+            LOG_INF("List bonds command");
+            break;
+            
+        case 0x02: // Set alias
+            if (cmd->bond_index >= bond_count) {
+                LOG_ERR("Invalid bond index: %d", cmd->bond_index);
+                return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+            }
+            
+            memcpy(bond_list[cmd->bond_index].alias, cmd->alias, BOND_ALIAS_MAX_LEN);
+            bond_list[cmd->bond_index].alias[BOND_ALIAS_MAX_LEN - 1] = '\0';
+            
+            LOG_INF("Set alias for bond %d: %s", cmd->bond_index, bond_list[cmd->bond_index].alias);
+            save_bond_aliases();
+            break;
+            
+        case 0x03: // Delete bond
+            if (cmd->bond_index >= bond_count) {
+                LOG_ERR("Invalid bond index: %d", cmd->bond_index);
+                return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+            }
+            
+            if (bond_list[cmd->bond_index].is_connected) {
+                LOG_ERR("Cannot delete active bond");
+                return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+            }
+            
+            LOG_WRN("Deleting bond %d", cmd->bond_index);
+            bt_unpair(BT_ID_DEFAULT, &bond_list[cmd->bond_index].addr);
+            refresh_bond_list();
+            save_bond_aliases();
+            break;
+            
+        default:
+            LOG_ERR("Unknown command: 0x%02X", cmd->cmd);
+            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    return len;
+}
+
+
+
+
 
 // ============================================================================
 // Initialization
@@ -1170,6 +1952,21 @@ static int battery_monitor_init(void) {
     
     k_work_init_delayable(&update_work, update_work_handler);
     k_work_init_delayable(&bootloader_work, bootloader_work_handler);
+
+
+    // Initialize connection array
+    memset(active_conns, 0, sizeof(active_conns));
+    refresh_bond_list();
+    
+    last_battery_percent = zmk_battery_state_of_charge();
+ 
+    
+
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    LOG_INF("📡 CONNECTION MANAGEMENT:");
+    LOG_INF("  Max connections: %d", MAX_CONNECTIONS);
+    LOG_INF("  Bonded devices: %d", bond_count);
+    LOG_INF("  Multi-connection: ENABLED");
     
     LOG_INF("✅ Battery Monitor initialized");
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -1206,6 +2003,7 @@ static int battery_monitor_init(void) {
             temp_settings.ext_low_enabled ? "ENABLED" : "DISABLED",
             temp_settings.ext_low_threshold / 100,
             abs(temp_settings.ext_low_threshold % 100));
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     
     return 0;
