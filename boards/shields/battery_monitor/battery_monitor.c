@@ -80,6 +80,22 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // BLE UUIDs
 // ============================================================================
 
+// ============================================================================
+// Standard BLE UUIDs (Bluetooth SIG)
+// ============================================================================
+
+// Battery Service (0x180F) - Standard Bluetooth SIG
+#define BT_UUID_BAS_VAL 0x180F
+#define BT_UUID_BAS \
+    BT_UUID_DECLARE_16(BT_UUID_BAS_VAL)
+
+// Battery Level Characteristic (0x2A19) - Standard Bluetooth SIG
+#define BT_UUID_BAS_BATTERY_LEVEL_VAL 0x2A19
+#define BT_UUID_BAS_BATTERY_LEVEL \
+    BT_UUID_DECLARE_16(BT_UUID_BAS_BATTERY_LEVEL_VAL)
+
+
+
 #define BT_UUID_CUSTOM_SERVICE_VAL \
     BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef0)
 #define BT_UUID_CUSTOM_SERVICE \
@@ -255,6 +271,7 @@ static struct temp_protection_settings temp_settings = {
 };
 
 extern const struct bt_gatt_service_static battery_monitor_svc;
+extern const struct bt_gatt_service_static bas_svc;  // ⭐ THÊM dòng này
 
 // Forward declarations
 static ssize_t read_power_control(struct bt_conn *conn, const struct bt_gatt_attr *attr,
@@ -285,6 +302,61 @@ static ssize_t write_bond_management(struct bt_conn *conn, const struct bt_gatt_
                                       const void *buf, uint16_t len, uint16_t offset, uint8_t flags);     
                                       
 static void switch_to_next_available_profile(void);
+
+
+
+// ============================================================================
+// Battery Level Handlers (Standard BLE Battery Service)
+// ============================================================================
+
+static ssize_t read_battery_level(struct bt_conn *conn, 
+                                   const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset) {
+    // ⭐ Đọc voltage và convert sang %
+    const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
+    
+    if (device_is_ready(battery)) {
+        sensor_sample_fetch(battery);
+        
+        struct sensor_value voltage;
+        if (sensor_channel_get(battery, SENSOR_CHAN_VOLTAGE, &voltage) == 0) {
+            current_voltage_mv = (voltage.val1 * 1000) + (voltage.val2 / 1000);
+            last_battery_percent = voltage_to_percent(current_voltage_mv);
+            
+            LOG_INF("📱 BLE Battery Level read: %d%% (%d mV)", 
+                    last_battery_percent, current_voltage_mv);
+        }
+    }
+    
+    // ⭐ CRITICAL: BAS battery level format là uint8 (0-100)
+    uint8_t battery_level = last_battery_percent;
+    
+    // Start auto-updates khi host đọc battery
+    start_auto_updates();
+    if (!k_work_delayable_is_pending(&update_work)) {
+        k_work_reschedule(&update_work, K_MSEC(UPDATE_INTERVAL_MS));
+    }
+    
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, 
+                            &battery_level, sizeof(battery_level));
+}
+
+// ⭐ Notify helper function
+static void notify_battery_level(uint8_t percent) {
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            // attrs[2] sẽ là Battery Level characteristic (xem GATT definition bên dưới)
+            bt_gatt_notify(active_conns[i], &bas_svc.attrs[1], 
+                          &percent, sizeof(percent));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    LOG_INF("🔋 Battery Level notified: %d%%", percent);
+}
+
+
 
 
 static int settings_set_all(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
@@ -981,7 +1053,8 @@ static void force_battery_update(void) {
         
         last_battery_percent = new_percent;
 
-        last_battery_percent = zmk_battery_state_of_charge();
+        // ⭐ Notify qua BLE Battery Service
+        notify_battery_level(new_percent);
 
         check_auto_mosfet(new_percent);
 }
@@ -1012,7 +1085,7 @@ static void update_all_sensors(void) {
 
     
 
-    last_battery_percent = zmk_battery_state_of_charge();
+    
     
 
 
@@ -1579,6 +1652,24 @@ static ssize_t write_temp_settings(struct bt_conn *conn, const struct bt_gatt_at
 // GATT Service
 // ============================================================================
 
+// ⭐ SERVICE 1: Standard Battery Service (0x180F)
+// Phải define TRƯỚC để có handle thấp (host ưu tiên scan service này)
+BT_GATT_SERVICE_DEFINE(bas_svc,
+    BT_GATT_PRIMARY_SERVICE(BT_UUID_BAS),
+    
+    // Battery Level Characteristic (0x2A19)
+    // Properties: Read + Notify (theo BLE spec)
+    BT_GATT_CHARACTERISTIC(BT_UUID_BAS_BATTERY_LEVEL,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ,
+                          read_battery_level, NULL, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+);
+
+
+
+
+
 BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
     BT_GATT_PRIMARY_SERVICE(BT_UUID_CUSTOM_SERVICE),
     
@@ -1869,7 +1960,7 @@ static int battery_monitor_init(void) {
     
     last_battery_percent = zmk_battery_state_of_charge();
  
-
+    
 
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     LOG_INF("📡 CONNECTION MANAGEMENT:");
