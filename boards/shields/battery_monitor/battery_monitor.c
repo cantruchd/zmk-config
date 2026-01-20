@@ -84,15 +84,15 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // Standard BLE UUIDs (Bluetooth SIG)
 // ============================================================================
 
-// Battery Service (0x180F) - Standard Bluetooth SIG
-#define BT_UUID_BAS_VAL 0x180F
-#define BT_UUID_BAS \
-    BT_UUID_DECLARE_16(BT_UUID_BAS_VAL)
+// // Battery Service (0x180F) - Standard Bluetooth SIG
+// #define BT_UUID_BAS_VAL 0x180F
+// #define BT_UUID_BAS \
+//     BT_UUID_DECLARE_16(BT_UUID_BAS_VAL)
 
-// Battery Level Characteristic (0x2A19) - Standard Bluetooth SIG
-#define BT_UUID_BAS_BATTERY_LEVEL_VAL 0x2A19
-#define BT_UUID_BAS_BATTERY_LEVEL \
-    BT_UUID_DECLARE_16(BT_UUID_BAS_BATTERY_LEVEL_VAL)
+// // Battery Level Characteristic (0x2A19) - Standard Bluetooth SIG
+// #define BT_UUID_BAS_BATTERY_LEVEL_VAL 0x2A19
+// #define BT_UUID_BAS_BATTERY_LEVEL \
+//     BT_UUID_DECLARE_16(BT_UUID_BAS_BATTERY_LEVEL_VAL)
 
 
 
@@ -303,7 +303,8 @@ static ssize_t write_bond_management(struct bt_conn *conn, const struct bt_gatt_
                                       
 static void switch_to_next_available_profile(void);
 
-
+static uint8_t voltage_to_percent(uint16_t voltage_mv);
+static void start_auto_updates(void);
 
 // ============================================================================
 // Battery Level Handlers (Standard BLE Battery Service)
