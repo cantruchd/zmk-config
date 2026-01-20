@@ -1133,9 +1133,9 @@ static int battery_level_listener(const zmk_event_t *eh) {
     
     uint8_t percent = ev->state_of_charge;
 
-    uint8_t percent2 = zmk_battery_state_of_charge();
+  
     LOG_INF("Battery: %d%%", percent);
-    LOG_INF("Battery (from API): %d%%", percent2);
+    
     
     // Auto MOSFET control
     check_auto_mosfet(percent);
@@ -1959,7 +1959,7 @@ static int battery_monitor_init(void) {
     memset(active_conns, 0, sizeof(active_conns));
     refresh_bond_list();
     
-    last_battery_percent = zmk_battery_state_of_charge();
+    last_battery_percent = read_battery_percent();
  
     
 
