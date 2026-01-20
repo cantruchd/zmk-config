@@ -1085,24 +1085,15 @@ static void update_all_sensors(void) {
         
         LOG_INF("🔋 Battery current: %d%% (%d mV)", new_percent, current_voltage_mv);
 
-        LOG_INF("🔋 Battery new: %d%% (%d mV)", new_percent, current_voltage_mv);
-        if (new_percent != last_battery_percent) {
-            LOG_INF("🔋 Battery: %d%% (%d mV)", new_percent, current_voltage_mv);
+        LOG_INF("🔋 Battery new: %d%% (%d mV)", new_percent, current_voltage_mv)
             
             last_battery_percent = new_percent;
             
             // ⭐ Notify BLE Battery Service
             notify_battery_level(new_percent);
             
-            // ⭐ Raise ZMK event (optional, cho internal system)
-            struct zmk_battery_state_changed ev = {
-                .state_of_charge = new_percent
-            };
-            raise_zmk_battery_state_changed(ev);
-            
             // Auto MOSFET control
             check_auto_mosfet(new_percent);
-        }
     }
     
     // Check temperature protection
