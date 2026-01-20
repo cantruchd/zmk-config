@@ -1075,40 +1075,48 @@ static void update_all_sensors(void) {
     int temp_ext_frac = abs(temp_external % 100);
     LOG_INF("External temp: %d.%02d°C", temp_ext_int, temp_ext_frac);
     
+    // ⭐ Đọc voltage
     read_battery_voltage();
-
     
-    read_battery_level(current_voltage_mv);
-
+    // ⭐ Convert voltage → % và notify BLE
+    if (current_voltage_mv > 0) {
+        uint8_t new_percent = voltage_to_percent(current_voltage_mv);
+        
+        if (new_percent != last_battery_percent) {
+            LOG_INF("🔋 Battery: %d%% (%d mV)", new_percent, current_voltage_mv);
+            
+            last_battery_percent = new_percent;
+            
+            // ⭐ Notify BLE Battery Service
+            notify_battery_level(new_percent);
+            
+            // ⭐ Raise ZMK event (optional, cho internal system)
+            struct zmk_battery_state_changed ev = {
+                .state_of_charge = new_percent
+            };
+            raise_zmk_battery_state_changed(ev);
+            
+            // Auto MOSFET control
+            check_auto_mosfet(new_percent);
+        }
+    }
     
     // Check temperature protection
     check_temp_protection();
-
     
-    check_auto_mosfet(last_battery_percent);
-    
-    
-
-
-    LOG_INF("Battery: %d%%", last_battery_percent);
-    
-    // bt_gatt_notify(NULL, &battery_monitor_svc.attrs[5], &temp_internal, sizeof(temp_internal));
-    // bt_gatt_notify(NULL, &battery_monitor_svc.attrs[8], &current_voltage_mv, sizeof(current_voltage_mv));
-    // bt_gatt_notify(NULL, &battery_monitor_svc.attrs[11], &temp_external, sizeof(temp_external));
-
-    // Notify all active connections
+    // Notify custom characteristics
     k_mutex_lock(&conn_mutex, K_FOREVER);
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
         if (active_conns[i]) {
-            // bt_gatt_notify(active_conns[i], attr, data, len);
-            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[5], &temp_internal, sizeof(temp_internal));
-            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[8], &current_voltage_mv, sizeof(current_voltage_mv));
-            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[11], &temp_external, sizeof(temp_external));
+            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[5], 
+                          &temp_internal, sizeof(temp_internal));
+            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[8], 
+                          &current_voltage_mv, sizeof(current_voltage_mv));
+            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[11], 
+                          &temp_external, sizeof(temp_external));
         }
     }
     k_mutex_unlock(&conn_mutex);
-
-
 }
 
 static void update_work_handler(struct k_work *work) {
@@ -1132,37 +1140,17 @@ static int battery_level_listener(const zmk_event_t *eh) {
     if (ev == NULL) return 0;
     
     uint8_t percent = ev->state_of_charge;
-
-  
-    LOG_INF("Battery: %d%%", percent);
     
+    // ⭐ Log event từ ZMK (nếu có external trigger)
+    LOG_DBG("ZMK battery event: %d%%", percent);
     
-    // Auto MOSFET control
-    check_auto_mosfet(percent);
+    // ⭐ Sync với custom logic (nếu ZMK update từ nguồn khác)
+    if (percent != last_battery_percent) {
+        last_battery_percent = percent;
+        notify_battery_level(percent);
+        check_auto_mosfet(percent);
+    }
     
-    // // Storage mode (always active)
-    // if (percent <= auto_settings.storage_percent && power_state) {
-    //     LOG_WRN("Storage mode at %d%%", percent);
-    //     set_power_state(false);
-    // }
-    
-    // Warnings
-    // if (percent <= 35 && percent > 20) {
-    //     if (last_battery_percent > 35) {
-    //         LOG_WRN("Battery low: %d%%", percent);
-    //     }
-    // }
-    
-    // if (percent <= 20) {
-    //     if (last_battery_percent > 20) {
-    //         LOG_ERR("Battery critical: %d%%", percent);
-    //     }
-    //     if (power_state) {
-    //         set_power_state(false);
-    //     }
-    // }
-    
-    last_battery_percent = percent;
     return 0;
 }
 
@@ -1959,6 +1947,13 @@ static int battery_monitor_init(void) {
     memset(active_conns, 0, sizeof(active_conns));
     refresh_bond_list();
     
+    // ⭐ THÊM: Đọc battery level ban đầu
+    read_battery_voltage();
+    if (current_voltage_mv > 0) {
+        last_battery_percent = voltage_to_percent(current_voltage_mv);
+        LOG_INF("🔋 Initial battery: %d%% (%d mV)", 
+                last_battery_percent, current_voltage_mv);
+    }
 
  
     
