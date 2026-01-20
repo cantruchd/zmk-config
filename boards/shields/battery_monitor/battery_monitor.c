@@ -1014,51 +1014,51 @@ static uint8_t voltage_to_percent(uint16_t voltage_mv) {
 
 
 
-// Force battery state update and raise event
-static void force_battery_update(void) {
-    if (current_voltage_mv == 0) return;
+// // Force battery state update and raise event
+// static void force_battery_update(void) {
+//     if (current_voltage_mv == 0) return;
     
-    uint8_t new_percent = voltage_to_percent(current_voltage_mv);
+//     uint8_t new_percent = voltage_to_percent(current_voltage_mv);
     
-    if (new_percent != last_battery_percent) {
-        LOG_INF("🔋 Battery: %d%% (%d mV)", new_percent, current_voltage_mv);
-    }
-        // Method 2: Nếu method 1 không compile, dùng sensor fetch
-        const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
-        if (device_is_ready(battery)) {
+//     if (new_percent != last_battery_percent) {
+//         LOG_INF("🔋 Battery: %d%% (%d mV)", new_percent, current_voltage_mv);
+//     }
+//         // Method 2: Nếu method 1 không compile, dùng sensor fetch
+//         const struct device *battery = DEVICE_DT_GET(DT_CHOSEN(zmk_battery));
+//         if (device_is_ready(battery)) {
         
                
                     
-                    // ⭐ CRITICAL: Manually trigger state_of_charge calculation
-                    struct sensor_value soc;
-                    int rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_STATE_OF_CHARGE, &soc);
-                    if (rc == 0) {
-                        uint8_t new_percent = soc.val1;
+//                     // ⭐ CRITICAL: Manually trigger state_of_charge calculation
+//                     struct sensor_value soc;
+//                     int rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_STATE_OF_CHARGE, &soc);
+//                     if (rc == 0) {
+//                         uint8_t new_percent = soc.val1;
                         
-                        if (new_percent != last_battery_percent) {
-                            LOG_INF("🔋 Battery updated: %d%% (%d mV)", 
-                                    new_percent, current_voltage_mv);
-                            }
-                        }
+//                         if (new_percent != last_battery_percent) {
+//                             LOG_INF("🔋 Battery updated: %d%% (%d mV)", 
+//                                     new_percent, current_voltage_mv);
+//                             }
+//                         }
                 
-            }        
+//             }        
         
         
-        // ⭐ CRITICAL: Manually raise ZMK battery event
-        struct zmk_battery_state_changed ev = {
-            .state_of_charge = new_percent            
-        };
+//         // ⭐ CRITICAL: Manually raise ZMK battery event
+//         struct zmk_battery_state_changed ev = {
+//             .state_of_charge = new_percent            
+//         };
         
-        // This will trigger battery_level_listener()
-        raise_zmk_battery_state_changed(ev);
+//         // This will trigger battery_level_listener()
+//         raise_zmk_battery_state_changed(ev);
         
-        last_battery_percent = new_percent;
+//         last_battery_percent = new_percent;
 
-        // ⭐ Notify qua BLE Battery Service
-        notify_battery_level(new_percent);
+//         // ⭐ Notify qua BLE Battery Service
+//         notify_battery_level(new_percent);
 
-        check_auto_mosfet(new_percent);
-}
+//         check_auto_mosfet(new_percent);
+// }
 
 
 
@@ -1077,15 +1077,15 @@ static void update_all_sensors(void) {
     
     read_battery_voltage();
 
-    // Force battery update
-    force_battery_update();
+    
+    read_battery_level();
 
     
     // Check temperature protection
     check_temp_protection();
 
     
-
+    check_auto_mosfet(last_battery_percent);
     
     
 
@@ -1959,7 +1959,7 @@ static int battery_monitor_init(void) {
     memset(active_conns, 0, sizeof(active_conns));
     refresh_bond_list();
     
-    last_battery_percent = read_battery_percent();
+    last_battery_percent = read_battery_level();
  
     
 
