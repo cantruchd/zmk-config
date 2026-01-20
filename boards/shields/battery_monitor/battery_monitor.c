@@ -1078,7 +1078,7 @@ static void update_all_sensors(void) {
     read_battery_voltage();
 
     
-    read_battery_level();
+    read_battery_level(current_voltage_mv);
 
     
     // Check temperature protection
@@ -1949,7 +1949,7 @@ static int battery_monitor_init(void) {
         return ret;
     }
     
-    set_power_state(false);
+    set_power_state(true);
     
     k_work_init_delayable(&update_work, update_work_handler);
     k_work_init_delayable(&bootloader_work, bootloader_work_handler);
@@ -1959,7 +1959,7 @@ static int battery_monitor_init(void) {
     memset(active_conns, 0, sizeof(active_conns));
     refresh_bond_list();
     
-    last_battery_percent = read_battery_level();
+
  
     
 
