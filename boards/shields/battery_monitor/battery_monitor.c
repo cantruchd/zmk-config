@@ -1085,7 +1085,7 @@ static void update_all_sensors(void) {
         
         LOG_INF("🔋 Battery current: %d%% (%d mV)", new_percent, current_voltage_mv);
 
-        LOG_INF("🔋 Battery new: %d%% (%d mV)", new_percent, current_voltage_mv)
+        LOG_INF("🔋 Battery new: %d%% (%d mV)", new_percent, current_voltage_mv);
             
             last_battery_percent = new_percent;
             
