@@ -348,7 +348,7 @@ static void notify_battery_level(uint8_t percent) {
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
         if (active_conns[i]) {
             // attrs[2] sẽ là Battery Level characteristic (xem GATT definition bên dưới)
-            bt_gatt_notify(active_conns[i], &bas_svc.attrs[1], 
+            bt_gatt_notify(active_conns[i], &bas_svc.attrs[2], 
                           &percent, sizeof(percent));
         }
     }
