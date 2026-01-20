@@ -1079,9 +1079,13 @@ static void update_all_sensors(void) {
     read_battery_voltage();
     
     // ⭐ Convert voltage → % và notify BLE
+    LOG_INF("Voltage read: %d mV", current_voltage_mv);
     if (current_voltage_mv > 0) {
         uint8_t new_percent = voltage_to_percent(current_voltage_mv);
-        LOG_INF("🔋 Battery: %d%% (%d mV)", new_percent, current_voltage_mv);
+        
+        LOG_INF("🔋 Battery current: %d%% (%d mV)", new_percent, current_voltage_mv);
+
+        LOG_INF("🔋 Battery new: %d%% (%d mV)", new_percent, current_voltage_mv);
         if (new_percent != last_battery_percent) {
             LOG_INF("🔋 Battery: %d%% (%d mV)", new_percent, current_voltage_mv);
             
