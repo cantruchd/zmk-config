@@ -28,3 +28,14 @@
         zephyr,display = &nice_view;
     };
 };
+
+
+/ {
+    aliases {
+        rtc0 = &rtc0;
+    };
+};
+
+&rtc0 {
+    status = "okay";
+};
