@@ -1931,9 +1931,9 @@ static int battery_monitor_init(void) {
         LOG_ERR("Failed to configure MOSFET: %d", ret);
         return ret;
     }
-    
+
     set_power_state(true);
-    
+
     k_work_init_delayable(&update_work, update_work_handler);
     k_work_init_delayable(&bootloader_work, bootloader_work_handler);
 

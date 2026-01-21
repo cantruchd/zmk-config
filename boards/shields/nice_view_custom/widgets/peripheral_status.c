@@ -176,6 +176,48 @@ K_TIMER_DEFINE(temp_timer, temp_timer_handler, NULL);
 // ĐỌC VOLTAGE TỪ ZMK BATTERY SENSOR
 // ========================================
 
+#include <zephyr/kernel.h>
+
+typedef struct {
+    uint32_t days;
+    uint8_t hours;
+    uint8_t minutes;
+    uint8_t seconds;
+    uint16_t milliseconds;
+} uptime_info_t;
+
+void uptime_to_dhms(uptime_info_t *info) {
+    int64_t uptime_ms = k_uptime_get();
+    
+    // Tính milliseconds
+    info->milliseconds = uptime_ms % 1000;
+    
+    // Chuyển sang giây
+    int64_t total_seconds = uptime_ms / 1000;
+    info->seconds = total_seconds % 60;
+    
+    // Chuyển sang phút
+    int64_t total_minutes = total_seconds / 60;
+    info->minutes = total_minutes % 60;
+    
+    // Chuyển sang giờ
+    int64_t total_hours = total_minutes / 60;
+    info->hours = total_hours % 24;
+    
+    // Chuyển sang ngày
+    info->days = total_hours / 24;
+}
+
+// Hàm in ra kết quả
+void print_uptime(void) {
+    uptime_info_t uptime;
+    uptime_to_dhms(&uptime);
+    
+    printk("Uptime: %u days, %u hours, %u minutes, %u seconds, %u ms\n",
+           uptime.days, uptime.hours, uptime.minutes, 
+           uptime.seconds, uptime.milliseconds);
+}
+
 
 
 static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
@@ -203,7 +245,17 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     
     lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v, v_text);
     lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v_label, v_label);
+
+    // draw uptime
+    char uptime_text[20];
+    uptime_info_t uptime;
+    uptime_to_dhms(&uptime);
+    snprintf(uptime_text, sizeof(uptime_text), "%ud%u:%u", 
+             uptime.days, uptime.hours, uptime.minutes);
+    lv_canvas_draw_text(canvas, 0, 20, MIDDLE_WIDTH, &label_dsc_v_label, uptime_text);
+
     rotate_canvas(canvas, cbuf);
+
 }
 
 static void draw_bottom(lv_obj_t *canvas, lv_color_t cbuf[]) {
