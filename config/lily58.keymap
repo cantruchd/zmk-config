@@ -36,72 +36,84 @@
             bindings = <&kp RIGHT>;
             key-positions = <28 27>;
             layers = <0>;
+            require-prior-idle-ms = <300>;
         };
 
         combo_left {
             bindings = <&kp LEFT_ARROW>;
             key-positions = <26 27>;
             layers = <0>;
+            require-prior-idle-ms = <300>;
         };
 
         combo_down {
             bindings = <&kp DOWN>;
             key-positions = <26 27 28>;
             layers = <0>;
+            require-prior-idle-ms = <300>;
         };
 
         combo_up {
             bindings = <&kp UP_ARROW>;
             key-positions = <28 15>;
             layers = <0>;
+            require-prior-idle-ms = <300>;
         };
 
         cb_home {
             bindings = <&kp HOME>;
             key-positions = <16 15>;
             layers = <0>;
+            require-prior-idle-ms = <300>;
         };
 
         cb_end {
             bindings = <&kp END>;
             key-positions = <40 39>;
             layers = <0>;
+            require-prior-idle-ms = <300>;
         };
 
         cb_left {
             bindings = <&kp LEFT>;
             key-positions = <31 32>;
             layers = <0>;
+            require-prior-idle-ms = <300>;
         };
 
         cb_right {
             bindings = <&kp RIGHT>;
             key-positions = <33 32>;
             layers = <0>;
+            require-prior-idle-ms = <300>;
         };
 
         cb_down {
             bindings = <&kp DOWN>;
             key-positions = <32 33 31>;
             layers = <0>;
+            require-prior-idle-ms = <300>;
         };
 
         cb_up {
             bindings = <&kp UP_ARROW>;
             key-positions = <31 20>;
             layers = <0>;
+            require-prior-idle-ms = <300>;
         };
 
         cb_home1 {
             bindings = <&kp HOME>;
             key-positions = <19 20>;
             layers = <0>;
+            require-prior-idle-ms = <300>;
         };
 
         cb_end1 {
             bindings = <&kp END>;
             key-positions = <45 46>;
             layers = <0>;
+            require-prior-idle-ms = <300>;
         };
 
         winshifts {
