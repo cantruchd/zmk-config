@@ -177,46 +177,106 @@ K_TIMER_DEFINE(temp_timer, temp_timer_handler, NULL);
 // ========================================
 
 #include <zephyr/kernel.h>
+#include <zephyr/drivers/counter.h>
+#include <zephyr/logging/log.h>
 
+LOG_MODULE_REGISTER(uptime_rtc, LOG_LEVEL_DBG);
+
+static const struct device *rtc_dev;
+static uint32_t rtc_start_ticks = 0;
+static bool rtc_initialized = false;
+
+// RTC0 trên nRF52 chạy ở 32.768 kHz
+#define RTC_FREQ 32768
+
+// Khởi tạo RTC
+int uptime_rtc_init(void) {
+    rtc_dev = DEVICE_DT_GET(DT_NODELABEL(rtc0));
+    
+    if (!device_is_ready(rtc_dev)) {
+        LOG_ERR("RTC device not ready");
+        return -ENODEV;
+    }
+    
+    // Đọc giá trị hiện tại làm mốc bắt đầu
+    int ret = counter_get_value(rtc_dev, &rtc_start_ticks);
+    if (ret != 0) {
+        LOG_ERR("Failed to get RTC value: %d", ret);
+        return ret;
+    }
+    
+    rtc_initialized = true;
+    LOG_INF("RTC uptime initialized, start ticks: %u", rtc_start_ticks);
+    
+    return 0;
+}
+
+// Lấy uptime tính bằng milliseconds
+int64_t uptime_rtc_get_ms(void) {
+    if (!rtc_initialized) {
+        return -EINVAL;
+    }
+    
+    uint32_t current_ticks;
+    int ret = counter_get_value(rtc_dev, &current_ticks);
+    if (ret != 0) {
+        LOG_ERR("Failed to read RTC: %d", ret);
+        return -EIO;
+    }
+    
+    // Tính elapsed ticks (xử lý overflow)
+    uint32_t elapsed_ticks;
+    if (current_ticks >= rtc_start_ticks) {
+        elapsed_ticks = current_ticks - rtc_start_ticks;
+    } else {
+        // RTC0 trên nRF52 là 24-bit counter
+        uint32_t top_value = counter_get_top_value(rtc_dev);
+        elapsed_ticks = (top_value - rtc_start_ticks) + current_ticks + 1;
+    }
+    
+    // Chuyển đổi: ticks -> milliseconds
+    // elapsed_ms = (elapsed_ticks * 1000) / 32768
+    // Tối ưu: (elapsed_ticks * 125) / 4096 để tránh overflow
+    int64_t uptime_ms = ((int64_t)elapsed_ticks * 1000) / RTC_FREQ;
+    
+    return uptime_ms;
+}
+
+// Lấy uptime tính bằng giây
+int64_t uptime_rtc_get_sec(void) {
+    int64_t ms = uptime_rtc_get_ms();
+    return (ms > 0) ? (ms / 1000) : ms;
+}
+
+// Struct thông tin uptime
 typedef struct {
     uint32_t days;
     uint8_t hours;
     uint8_t minutes;
     uint8_t seconds;
-    uint16_t milliseconds;
 } uptime_info_t;
 
-void uptime_to_dhms(uptime_info_t *info) {
-    int64_t uptime_ms = k_uptime_get();
+// Chuyển đổi sang ngày/giờ/phút/giây
+void uptime_rtc_to_dhms(uptime_info_t *info) {
+    int64_t uptime_ms = uptime_rtc_get_ms();
     
-    // Tính milliseconds
-    info->milliseconds = uptime_ms % 1000;
+    if (uptime_ms < 0) {
+        memset(info, 0, sizeof(uptime_info_t));
+        return;
+    }
     
-    // Chuyển sang giây
     int64_t total_seconds = uptime_ms / 1000;
     info->seconds = total_seconds % 60;
     
-    // Chuyển sang phút
     int64_t total_minutes = total_seconds / 60;
     info->minutes = total_minutes % 60;
     
-    // Chuyển sang giờ
     int64_t total_hours = total_minutes / 60;
     info->hours = total_hours % 24;
     
-    // Chuyển sang ngày
     info->days = total_hours / 24;
 }
 
-// Hàm in ra kết quả
-void print_uptime(void) {
-    uptime_info_t uptime;
-    uptime_to_dhms(&uptime);
-    
-    printk("Uptime: %u days, %u hours, %u minutes, %u seconds, %u ms\n",
-           uptime.days, uptime.hours, uptime.minutes, 
-           uptime.seconds, uptime.milliseconds);
-}
 
 
 
@@ -247,12 +307,15 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v_label, v_label);
 
     // draw uptime
-    char uptime_text[20];
+    char uptime_day[10];
+    char uptime_hourmin[10];
+
     uptime_info_t uptime;
-    uptime_to_dhms(&uptime);
-    snprintf(uptime_text, sizeof(uptime_text), "%ud%u:%u", 
-             uptime.days, uptime.hours, uptime.minutes);
-    lv_canvas_draw_text(canvas, 0, 20, MIDDLE_WIDTH, &label_dsc_v_label, uptime_text);
+    uptime_rtc_to_dhms(&uptime);
+    snprintf(uptime_day, sizeof(uptime_day), "%ud", uptime.days);
+    snprintf(uptime_hourmin, sizeof(uptime_hourmin), "%02d:%02d", uptime.hours, uptime.minutes);
+    lv_canvas_draw_text(canvas, 0, 20, MIDDLE_WIDTH, &label_dsc_v_label, uptime_day);
+    lv_canvas_draw_text(canvas, 0, 40, MIDDLE_WIDTH, &label_dsc_v_label, uptime_hourmin);
 
     rotate_canvas(canvas, cbuf);
 
@@ -420,6 +483,10 @@ ZMK_SUBSCRIPTION(widget_temperature, zmk_activity_state_changed);
 // ========================================
 
 int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
+
+
+    uptime_rtc_init();
+
     LOG_INF("=== Init nice_view with temperature ===");
     
     widget->obj = lv_obj_create(parent);
