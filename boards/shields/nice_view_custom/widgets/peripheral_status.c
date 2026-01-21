@@ -180,7 +180,6 @@ K_TIMER_DEFINE(temp_timer, temp_timer_handler, NULL);
 #include <zephyr/drivers/counter.h>
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_REGISTER(uptime_rtc, LOG_LEVEL_DBG);
 
 static const struct device *rtc_dev;
 static uint32_t rtc_start_ticks = 0;
@@ -194,19 +193,19 @@ int uptime_rtc_init(void) {
     rtc_dev = DEVICE_DT_GET(DT_NODELABEL(rtc0));
     
     if (!device_is_ready(rtc_dev)) {
-        LOG_ERR("RTC device not ready");
+     
         return -ENODEV;
     }
     
     // Đọc giá trị hiện tại làm mốc bắt đầu
     int ret = counter_get_value(rtc_dev, &rtc_start_ticks);
     if (ret != 0) {
-        LOG_ERR("Failed to get RTC value: %d", ret);
+ 
         return ret;
     }
     
     rtc_initialized = true;
-    LOG_INF("RTC uptime initialized, start ticks: %u", rtc_start_ticks);
+   
     
     return 0;
 }
@@ -220,7 +219,7 @@ int64_t uptime_rtc_get_ms(void) {
     uint32_t current_ticks;
     int ret = counter_get_value(rtc_dev, &current_ticks);
     if (ret != 0) {
-        LOG_ERR("Failed to read RTC: %d", ret);
+     
         return -EIO;
     }
     
