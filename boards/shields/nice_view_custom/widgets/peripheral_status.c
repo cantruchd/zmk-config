@@ -424,8 +424,8 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     snprintf(uptime_hourmin, sizeof(uptime_hourmin), "%02d:%02d", uptime.hours, uptime.minutes);
 
     LOG_WRN("Drawing uptime: %s %s", uptime_day, uptime_hourmin);
-    lv_canvas_draw_text(canvas, 0, 22, MIDDLE_WIDTH, &label_dsc_v_label_uptime, uptime_day);
-    lv_canvas_draw_text(canvas, 0, 44, MIDDLE_WIDTH, &label_dsc_v_label_uptime, uptime_hourmin);
+    lv_canvas_draw_text(canvas, 0, 24, MIDDLE_WIDTH, &label_dsc_v_label_uptime, uptime_day);
+    lv_canvas_draw_text(canvas, 0, 46, MIDDLE_WIDTH, &label_dsc_v_label_uptime, uptime_hourmin);
 
     rotate_canvas(canvas, cbuf);
 
