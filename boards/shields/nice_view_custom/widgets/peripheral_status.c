@@ -107,7 +107,7 @@ static void read_battery_voltage(void) {
         current_voltage_mv = (voltage.val1 * 1000) + (voltage.val2 / 1000);
         
         // Chỉ log khi cần thiết để tránh tràn log buffer
-        LOG_INF("Voltage: %d mV", current_voltage_mv);
+        LOG_DBG("Voltage: %d mV", current_voltage_mv);
     } else {
         LOG_ERR("No valid voltage channel found");
         current_voltage_mv = 0;
@@ -135,7 +135,7 @@ static void read_temperature(void) {
             current_temp_val = temp_val;
             temp_data_valid = true;
             // Log với 2 chữ số thập phân để kiểm tra
-            LOG_INF("Temperature: %d.%02d°C", temp_val.val1, abs(temp_val.val2 / 10000));
+            LOG_DBG("Temperature: %d.%02d°C", temp_val.val1, abs(temp_val.val2 / 10000));
         }
     } else {
         LOG_WRN("Failed to fetch temperature: %d", rc);
@@ -222,7 +222,7 @@ int64_t uptime_rtc_get_ms(void) {
      
         return -EIO;
     }
-    LOG_INF("RTC ticks: %u", current_ticks);
+    LOG_DBG("RTC ticks: %u", current_ticks);
 
 
     // Tính elapsed ticks (xử lý overflow)
@@ -239,7 +239,7 @@ int64_t uptime_rtc_get_ms(void) {
     // elapsed_ms = (elapsed_ticks * 1000) / 32768
     // Tối ưu: (elapsed_ticks * 125) / 4096 để tránh overflow
     int64_t uptime_ms = ((int64_t)elapsed_ticks * 1000) / RTC_FREQ;
-    LOG_INF("Uptime ms: %lld", uptime_ms);
+    LOG_DBG("Uptime ms: %lld", uptime_ms);
     return uptime_ms;
 }
 
@@ -304,7 +304,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
         snprintf(v_text, sizeof(v_text), logtext);
     }
 
-    LOG_INF("Drawing voltage: %s V", v_text);
+    LOG_DBG("Drawing voltage: %s V", v_text);
     k_sleep(K_MSEC(10000)); // Small delay to ensure proper rendering
     
     lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v, v_text);
@@ -319,7 +319,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     snprintf(uptime_day, sizeof(uptime_day), "%ud", uptime.days);
     snprintf(uptime_hourmin, sizeof(uptime_hourmin), "%02d:%02d", uptime.hours, uptime.minutes);
 
-    LOG_INF("Drawing uptime: %s %s", uptime_day, uptime_hourmin);
+    LOG_DBG("Drawing uptime: %s %s", uptime_day, uptime_hourmin);
     // lv_canvas_draw_text(canvas, 0, 20, MIDDLE_WIDTH, &label_dsc_v_label, uptime_day);
     // lv_canvas_draw_text(canvas, 0, 40, MIDDLE_WIDTH, &label_dsc_v_label, uptime_hourmin);
 
@@ -472,10 +472,10 @@ static int temperature_listener(const zmk_event_t *eh) {
 
     if (ev->state == ZMK_ACTIVITY_IDLE || ev->state == ZMK_ACTIVITY_SLEEP) {
         k_timer_stop(&temp_timer);
-        LOG_INF("Temperature timer stopped");
+        LOG_DBG("Temperature timer stopped");
     } else if (ev->state == ZMK_ACTIVITY_ACTIVE) {
         k_timer_start(&temp_timer, K_SECONDS(1), K_SECONDS(30));
-        LOG_INF("Temperature timer started");
+        LOG_DBG("Temperature timer started");
     }
 
     return ZMK_EV_EVENT_BUBBLE;
@@ -493,7 +493,7 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
 
     // uptime_rtc_init();
 
-    LOG_INF("=== Init nice_view with temperature ===");
+    LOG_DBG("=== Init nice_view with temperature ===");
     
     widget->obj = lv_obj_create(parent);
     lv_obj_set_size(widget->obj, 160, 68);
@@ -527,7 +527,7 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     
     // Start timer
     k_timer_start(&temp_timer, K_SECONDS(2), K_SECONDS(30));
-	LOG_INF("Temperature timer started");
+	LOG_DBG("Temperature timer started");
 	
 	/* lv_obj_t *art = lv_img_create(widget->obj);
     bool random = sys_rand32_get() & 1;
@@ -538,7 +538,7 @@ int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
     widget_battery_status_init();
     widget_peripheral_status_init();
 
-    LOG_INF("=== Widget init complete ===");
+    LOG_DBG("=== Widget init complete ===");
     return 0;
 }
 
