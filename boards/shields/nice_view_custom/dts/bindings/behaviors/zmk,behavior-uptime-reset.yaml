@@ -1,13 +1,5 @@
-description: Reset uptime counter to zero
+description: Behavior to reset uptime counter
 
 compatible: "zmk,behavior-uptime-reset"
 
-include: zero_param.yaml
-
-properties:
-  display-name:
-    type: string
-    default: "Reset Uptime"
-  
-  #binding-cells:
-    const: 0
+include: one_param.yaml

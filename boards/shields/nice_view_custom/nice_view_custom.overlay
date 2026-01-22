@@ -29,16 +29,11 @@
     };
 };
 
-/*
-
 / {
-    aliases {
-        rtc0 = &rtc0;
+    behaviors {
+        uptime_rst: uptime_reset {
+            compatible = "zmk,behavior-uptime-reset";
+            #binding-cells = <0>;
+        };
     };
 };
-
-&rtc0 {
-    status = "okay";
-};
-
-*/
