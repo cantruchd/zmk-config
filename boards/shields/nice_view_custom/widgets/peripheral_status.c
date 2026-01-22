@@ -38,7 +38,8 @@ struct peripheral_status_state {
 char logtext[10];
 
 
-
+int uptime_save(void);
+int64_t uptime_get_total_ms(void);
 // Lưu trữ cấu trúc sensor đầy đủ
 static struct sensor_value current_temp_val = {0};
 static bool temp_data_valid = false;
@@ -220,7 +221,7 @@ static void check_auto_reset_uptime(uint8_t battery_level, bool is_charging) {
             if (elapsed >= FULL_CHARGE_DURATION_MS) {
                 LOG_INF("Auto-resetting uptime after 2min at 100%%");
                 uptime_reset();
-                uptime_reset_triggered = true;  // Đánh dấu đã reset
+                //uptime_reset_triggered = true;  // Đánh dấu đã reset
                 
                 // Cập nhật UI
                 struct zmk_widget_status *widget;
@@ -247,8 +248,7 @@ static void check_auto_reset_uptime(uint8_t battery_level, bool is_charging) {
 #include <zephyr/settings/settings.h>
 #include <zephyr/logging/log.h>
 
-int uptime_save(void);
-int64_t uptime_get_total_ms(void);
+
 
 
 // Lưu tổng uptime vào settings (persistent storage)
