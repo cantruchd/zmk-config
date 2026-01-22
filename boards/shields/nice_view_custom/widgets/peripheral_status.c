@@ -146,6 +146,7 @@ static void read_temperature(void) {
 static void temp_work_handler(struct k_work *work) {
     read_temperature();
     read_battery_voltage();
+    uptime_save(); // Lưu uptime định kỳ
     struct zmk_widget_status *widget;
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
         draw_top(widget->obj, widget->cbuf, &widget->state);
@@ -177,79 +178,15 @@ K_TIMER_DEFINE(temp_timer, temp_timer_handler, NULL);
 // ========================================
 
 #include <zephyr/kernel.h>
-#include <zephyr/drivers/counter.h>
+#include <zephyr/settings/settings.h>
 #include <zephyr/logging/log.h>
 
+LOG_MODULE_REGISTER(uptime, LOG_LEVEL_INF);
 
-static const struct device *rtc_dev;
-static uint32_t rtc_start_ticks = 0;
-static bool rtc_initialized = false;
-
-// RTC0 trên nRF52 chạy ở 32.768 kHz
-#define RTC_FREQ 32768
-
-// // Khởi tạo RTC
-// int uptime_rtc_init(void) {
-//     rtc_dev = DEVICE_DT_GET(DT_NODELABEL(rtc0));
-    
-//     if (!device_is_ready(rtc_dev)) {
-     
-//         return -ENODEV;
-//     }
-    
-//     // Đọc giá trị hiện tại làm mốc bắt đầu
-//     int ret = counter_get_value(rtc_dev, &rtc_start_ticks);
-//     if (ret != 0) {
- 
-//         return ret;
-//     }
-    
-//     rtc_initialized = true;
-   
-    
-//     return 0;
-// }
-
-// Lấy uptime tính bằng milliseconds
-int64_t uptime_rtc_get_ms(void) {
-    // if (!rtc_initialized) {
-    //     return -EINVAL;
-    // }
-    
-    LOG_WRN("Getting RTC uptime in ms");
-
-    uint32_t current_ticks;
-    int ret = counter_get_value(rtc_dev, &current_ticks);
-    if (ret != 0) {
-     
-        return -EIO;
-    }
-    LOG_WRN("RTC ticks: %u", current_ticks);
-
-
-    // Tính elapsed ticks (xử lý overflow)
-    uint32_t elapsed_ticks = current_ticks - rtc_start_ticks;
-    // if (current_ticks >= rtc_start_ticks) {
-    //     elapsed_ticks = current_ticks - rtc_start_ticks;
-    // } else {
-    //     // RTC0 trên nRF52 là 24-bit counter
-    //     uint32_t top_value = counter_get_top_value(rtc_dev);
-    //     elapsed_ticks = (top_value - rtc_start_ticks) + current_ticks + 1;
-    // }
-    
-    // Chuyển đổi: ticks -> milliseconds
-    // elapsed_ms = (elapsed_ticks * 1000) / 32768
-    // Tối ưu: (elapsed_ticks * 125) / 4096 để tránh overflow
-    int64_t uptime_ms = ((int64_t)elapsed_ticks * 1000) / RTC_FREQ;
-    LOG_WRN("Uptime ms: %lld", uptime_ms);
-    return uptime_ms;
-}
-
-// Lấy uptime tính bằng giây
-int64_t uptime_rtc_get_sec(void) {
-    int64_t ms = uptime_rtc_get_ms();
-    return (ms > 0) ? (ms / 1000) : ms;
-}
+// Lưu tổng uptime vào settings (persistent storage)
+static int64_t total_uptime_ms = 0;
+static int64_t session_start_ms = 0;
+static bool uptime_initialized = false;
 
 // Struct thông tin uptime
 typedef struct {
@@ -259,19 +196,115 @@ typedef struct {
     uint8_t seconds;
 } uptime_info_t;
 
-// Chuyển đổi sang ngày/giờ/phút/giây
-void uptime_rtc_to_dhms(uptime_info_t *info) {
+// Settings handler - load uptime từ flash
+static int uptime_settings_set(const char *name, size_t len,
+                               settings_read_cb read_cb, void *cb_arg) {
+    if (!strcmp(name, "total")) {
+        if (len == sizeof(total_uptime_ms)) {
+            read_cb(cb_arg, &total_uptime_ms, len);
+            LOG_INF("Loaded uptime from storage: %lld ms", total_uptime_ms);
+        }
+    }
+    return 0;
+}
 
-    LOG_WRN("Converting uptime to DHMS");
+static struct settings_handler uptime_settings = {
+    .name = "uptime",
+    .h_set = uptime_settings_set,
+};
 
-
-    int64_t uptime_ms = uptime_rtc_get_ms();
+// Khởi tạo uptime system
+int uptime_init(void) {
+    int rc;
     
-    if (uptime_ms < 0) {
-        memset(info, 0, sizeof(uptime_info_t));
-        return;
+    // Init settings subsystem
+    rc = settings_subsys_init();
+    if (rc != 0) {
+        LOG_ERR("Settings init failed: %d", rc);
+        return rc;
     }
     
+    // Register handler
+    rc = settings_register(&uptime_settings);
+    if (rc != 0) {
+        LOG_ERR("Settings register failed: %d", rc);
+        return rc;
+    }
+    
+    // Load saved uptime
+    rc = settings_load_subtree("uptime");
+    if (rc != 0) {
+        LOG_WRN("Failed to load uptime, starting from 0");
+        total_uptime_ms = 0;
+    }
+    
+    // Lưu thời điểm bắt đầu session này
+    session_start_ms = k_uptime_get();
+    uptime_initialized = true;
+    
+    LOG_INF("Uptime system initialized");
+    return 0;
+}
+
+// Lưu uptime vào flash
+int uptime_save(void) {
+    if (!uptime_initialized) {
+        return -EINVAL;
+    }
+    
+    int64_t current = uptime_get_total_ms();
+    int rc = settings_save_one("uptime/total", &current, sizeof(current));
+    
+    if (rc == 0) {
+        LOG_DBG("Uptime saved: %lld ms", current);
+    } else {
+        LOG_ERR("Failed to save uptime: %d", rc);
+    }
+    
+    return rc;
+}
+
+// RESET uptime về 0
+int uptime_reset(void) {
+    if (!uptime_initialized) {
+        return -EINVAL;
+    }
+    
+    total_uptime_ms = 0;
+    session_start_ms = k_uptime_get();
+    
+    // Xóa khỏi flash
+    int rc = settings_delete("uptime/total");
+    if (rc == 0) {
+        LOG_INF("Uptime reset successfully");
+    } else {
+        LOG_ERR("Failed to reset uptime: %d", rc);
+    }
+    
+    return rc;
+}
+
+// Lấy tổng uptime (ms) - bao gồm cả previous sessions
+int64_t uptime_get_total_ms(void) {
+    if (!uptime_initialized) {
+        return 0;
+    }
+    
+    int64_t current_session = k_uptime_get() - session_start_ms;
+    return total_uptime_ms + current_session;
+}
+
+// Lấy uptime của session hiện tại (ms)
+int64_t uptime_get_session_ms(void) {
+    if (!uptime_initialized) {
+        return 0;
+    }
+    
+    return k_uptime_get() - session_start_ms;
+}
+
+// Chuyển đổi sang ngày/giờ/phút/giây
+void uptime_to_dhms(uptime_info_t *info, int64_t uptime_ms) {
     int64_t total_seconds = uptime_ms / 1000;
     info->seconds = total_seconds % 60;
     
@@ -284,7 +317,63 @@ void uptime_rtc_to_dhms(uptime_info_t *info) {
     info->days = total_hours / 24;
 }
 
+// In total uptime
+void uptime_print_total(void) {
+    uptime_info_t uptime;
+    int64_t total_ms = uptime_get_total_ms();
+    uptime_to_dhms(&uptime, total_ms);
+    
+    printk("Total Uptime: %ud %02uh %02um %02us\n",
+           uptime.days, uptime.hours, uptime.minutes, uptime.seconds);
+}
 
+// In session uptime
+void uptime_print_session(void) {
+    uptime_info_t uptime;
+    int64_t session_ms = uptime_get_session_ms();
+    uptime_to_dhms(&uptime, session_ms);
+    
+    printk("Session Uptime: %ud %02uh %02um %02us\n",
+           uptime.days, uptime.hours, uptime.minutes, uptime.seconds);
+}
+
+// Format uptime thành string
+int uptime_format(char *buf, size_t buf_size, int64_t uptime_ms) {
+    uptime_info_t uptime;
+    uptime_to_dhms(&uptime, uptime_ms);
+    
+    return snprintf(buf, buf_size, "%ud %02uh %02um %02us",
+                    uptime.days, uptime.hours, uptime.minutes, uptime.seconds);
+}
+
+// Auto-save worker
+void uptime_autosave_work_handler(struct k_work *work) {
+    uptime_save();
+    // Schedule lại sau 1 giờ
+    k_work_schedule((struct k_work_delayable *)work, K_HOURS(1));
+}
+
+K_WORK_DELAYABLE_DEFINE(uptime_autosave_work, uptime_autosave_work_handler);
+
+// Bắt đầu auto-save
+void uptime_start_autosave(void) {
+    k_work_schedule(&uptime_autosave_work, K_HOURS(1));
+    LOG_INF("Uptime auto-save enabled (every 1 hour)");
+}
+
+// Dừng auto-save
+void uptime_stop_autosave(void) {
+    k_work_cancel_delayable(&uptime_autosave_work);
+    LOG_INF("Uptime auto-save disabled");
+}
+
+// Hook trước khi sleep - lưu uptime
+void uptime_before_sleep(void) {
+    uptime_save();
+}
+
+// Init system
+SYS_INIT(uptime_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 
 static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
@@ -324,13 +413,14 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     char uptime_hourmin[10];
     LOG_WRN("Drawing uptime info");
     uptime_info_t uptime;
-    uptime_rtc_to_dhms(&uptime);
+    int64_t total_ms = uptime_get_total_ms();
+    uptime_to_dhms(&uptime, total_ms);
     snprintf(uptime_day, sizeof(uptime_day), "%ud", uptime.days);
     snprintf(uptime_hourmin, sizeof(uptime_hourmin), "%02d:%02d", uptime.hours, uptime.minutes);
 
     LOG_WRN("Drawing uptime: %s %s", uptime_day, uptime_hourmin);
-    // lv_canvas_draw_text(canvas, 0, 20, MIDDLE_WIDTH, &label_dsc_v_label, uptime_day);
-    // lv_canvas_draw_text(canvas, 0, 40, MIDDLE_WIDTH, &label_dsc_v_label, uptime_hourmin);
+    lv_canvas_draw_text(canvas, 0, 20, MIDDLE_WIDTH, &label_dsc_v_label, uptime_day);
+    lv_canvas_draw_text(canvas, 0, 40, MIDDLE_WIDTH, &label_dsc_v_label, uptime_hourmin);
 
     rotate_canvas(canvas, cbuf);
 
@@ -480,6 +570,7 @@ static int temperature_listener(const zmk_event_t *eh) {
     }
 
     if (ev->state == ZMK_ACTIVITY_IDLE || ev->state == ZMK_ACTIVITY_SLEEP) {
+        uptime_save(); // Lưu uptime trước khi sleep
         k_timer_stop(&temp_timer);
         LOG_WRN("Temperature timer stopped");
     } else if (ev->state == ZMK_ACTIVITY_ACTIVE) {
