@@ -188,27 +188,27 @@ static bool rtc_initialized = false;
 // RTC0 trên nRF52 chạy ở 32.768 kHz
 #define RTC_FREQ 32768
 
-// Khởi tạo RTC
-int uptime_rtc_init(void) {
-    rtc_dev = DEVICE_DT_GET(DT_NODELABEL(rtc0));
+// // Khởi tạo RTC
+// int uptime_rtc_init(void) {
+//     rtc_dev = DEVICE_DT_GET(DT_NODELABEL(rtc0));
     
-    if (!device_is_ready(rtc_dev)) {
+//     if (!device_is_ready(rtc_dev)) {
      
-        return -ENODEV;
-    }
+//         return -ENODEV;
+//     }
     
-    // Đọc giá trị hiện tại làm mốc bắt đầu
-    int ret = counter_get_value(rtc_dev, &rtc_start_ticks);
-    if (ret != 0) {
+//     // Đọc giá trị hiện tại làm mốc bắt đầu
+//     int ret = counter_get_value(rtc_dev, &rtc_start_ticks);
+//     if (ret != 0) {
  
-        return ret;
-    }
+//         return ret;
+//     }
     
-    rtc_initialized = true;
+//     rtc_initialized = true;
    
     
-    return 0;
-}
+//     return 0;
+// }
 
 // Lấy uptime tính bằng milliseconds
 int64_t uptime_rtc_get_ms(void) {
