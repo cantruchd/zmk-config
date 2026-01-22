@@ -216,6 +216,8 @@ int64_t uptime_rtc_get_ms(void) {
     //     return -EINVAL;
     // }
     
+    LOG_DBG("Getting RTC uptime in ms");
+
     uint32_t current_ticks;
     int ret = counter_get_value(rtc_dev, &current_ticks);
     if (ret != 0) {
@@ -259,6 +261,10 @@ typedef struct {
 
 // Chuyển đổi sang ngày/giờ/phút/giây
 void uptime_rtc_to_dhms(uptime_info_t *info) {
+
+    LOG_DBG("Converting uptime to DHMS");
+
+
     int64_t uptime_ms = uptime_rtc_get_ms();
     
     if (uptime_ms < 0) {
@@ -318,7 +324,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     char uptime_hourmin[10];
 
     uptime_info_t uptime;
-    //uptime_rtc_to_dhms(&uptime);
+    uptime_rtc_to_dhms(&uptime);
     snprintf(uptime_day, sizeof(uptime_day), "%ud", uptime.days);
     snprintf(uptime_hourmin, sizeof(uptime_hourmin), "%02d:%02d", uptime.hours, uptime.minutes);
 
