@@ -222,7 +222,9 @@ int64_t uptime_rtc_get_ms(void) {
      
         return -EIO;
     }
-    
+    LOG_INF("RTC ticks: %u", current_ticks);
+
+
     // Tính elapsed ticks (xử lý overflow)
     uint32_t elapsed_ticks = current_ticks - rtc_start_ticks;
     // if (current_ticks >= rtc_start_ticks) {
@@ -237,7 +239,7 @@ int64_t uptime_rtc_get_ms(void) {
     // elapsed_ms = (elapsed_ticks * 1000) / 32768
     // Tối ưu: (elapsed_ticks * 125) / 4096 để tránh overflow
     int64_t uptime_ms = ((int64_t)elapsed_ticks * 1000) / RTC_FREQ;
-    
+    LOG_INF("Uptime ms: %lld", uptime_ms);
     return uptime_ms;
 }
 
@@ -301,6 +303,9 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     } else {
         snprintf(v_text, sizeof(v_text), logtext);
     }
+
+    LOG_INF("Drawing voltage: %s V", v_text);
+    k_sleep(K_MSEC(10000)); // Small delay to ensure proper rendering
     
     lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v, v_text);
     lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v_label, v_label);
