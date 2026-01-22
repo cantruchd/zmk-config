@@ -181,6 +181,10 @@ K_TIMER_DEFINE(temp_timer, temp_timer_handler, NULL);
 #include <zephyr/settings/settings.h>
 #include <zephyr/logging/log.h>
 
+int uptime_save(void);
+int64_t uptime_get_total_ms(void);
+
+
 // Lưu tổng uptime vào settings (persistent storage)
 static int64_t total_uptime_ms = 0;
 static int64_t session_start_ms = 0;
