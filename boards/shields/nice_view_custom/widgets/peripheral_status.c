@@ -147,6 +147,17 @@ static void temp_work_handler(struct k_work *work) {
     read_temperature();
     read_battery_voltage();
     uptime_save(); // Lưu uptime định kỳ
+
+    // THÊM: Kiểm tra auto-reset (lấy thông tin pin hiện tại)
+    uint8_t battery_level = zmk_battery_state_of_charge();
+    bool is_charging = false;
+    #if IS_ENABLED(CONFIG_USB_DEVICE_STACK)
+        is_charging = zmk_usb_is_powered();
+    #endif
+    check_auto_reset_uptime(battery_level, is_charging);
+
+
+
     struct zmk_widget_status *widget;
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
         draw_top(widget->obj, widget->cbuf, &widget->state);
@@ -176,6 +187,61 @@ K_TIMER_DEFINE(temp_timer, temp_timer_handler, NULL);
 // ========================================
 // ĐỌC VOLTAGE TỪ ZMK BATTERY SENSOR
 // ========================================
+
+// Biến theo dõi trạng thái pin đầy để auto-reset uptime
+static int64_t full_charge_start_time = 0;  // Thời điểm bắt đầu đạt 100%
+static bool is_at_100_percent = false;       // Đang ở 100%?
+static bool uptime_reset_triggered = false;  // Đã reset trong chu kỳ này chưa?
+
+#define FULL_CHARGE_DURATION_MS (2 * 60 * 1000)  // 2 phút = 120,000 ms
+
+
+// ========================================
+// THÊM HÀM MỚI - Kiểm tra và reset uptime tự động
+// ========================================
+
+static void check_auto_reset_uptime(uint8_t battery_level, bool is_charging) {
+    int64_t current_time = k_uptime_get();
+    
+    // Kiểm tra điều kiện: Pin = 100% VÀ đang sạc
+    if (battery_level == 100 && is_charging) {
+        
+        // Lần đầu tiên đạt 100%
+        if (!is_at_100_percent) {
+            is_at_100_percent = true;
+            full_charge_start_time = current_time;
+            uptime_reset_triggered = false;  // Reset flag
+            LOG_INF("Battery at 100%% and charging - starting 2min timer");
+        }
+        // Đã ở 100% được 2 phút và chưa reset
+        else if (!uptime_reset_triggered) {
+            int64_t elapsed = current_time - full_charge_start_time;
+            
+            if (elapsed >= FULL_CHARGE_DURATION_MS) {
+                LOG_INF("Auto-resetting uptime after 2min at 100%%");
+                uptime_reset();
+                uptime_reset_triggered = true;  // Đánh dấu đã reset
+                
+                // Cập nhật UI
+                struct zmk_widget_status *widget;
+                SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) {
+                    lv_obj_t *middle_canvas = lv_obj_get_child(widget->obj, 1);
+                    draw_middle(middle_canvas, middle_cbuf);
+                }
+            }
+        }
+    }
+    // Nếu pin không còn 100% hoặc ngừng sạc -> reset trạng thái
+    else {
+        if (is_at_100_percent) {
+            LOG_INF("Battery dropped below 100%% or charging stopped - reset timer");
+        }
+        is_at_100_percent = false;
+        uptime_reset_triggered = false;
+        full_charge_start_time = 0;
+    }
+}
+
 
 #include <zephyr/kernel.h>
 #include <zephyr/settings/settings.h>
@@ -520,6 +586,10 @@ static void battery_status_update_cb(struct battery_status_state state) {
     SYS_SLIST_FOR_EACH_CONTAINER(&widgets, widget, node) { 
         set_battery_status(widget, state); 
     }
+
+
+    // THÊM DÒNG NÀY: Kiểm tra auto-reset uptime
+    check_auto_reset_uptime(state.level, state.usb_present);
 }
 
 static struct battery_status_state battery_status_get_state(const zmk_event_t *eh) {
