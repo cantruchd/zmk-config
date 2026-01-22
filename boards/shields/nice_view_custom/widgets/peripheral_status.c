@@ -317,12 +317,12 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
 
 
     LOG_WRN("Drawing voltage: %s V", v_text);
-    k_sleep(K_MSEC(10000)); // Small delay to ensure proper rendering
+    //k_sleep(K_MSEC(10000)); // Small delay to ensure proper rendering
 
     // draw uptime
     char uptime_day[10];
     char uptime_hourmin[10];
-
+    LOG_WRN("Drawing uptime info");
     uptime_info_t uptime;
     uptime_rtc_to_dhms(&uptime);
     snprintf(uptime_day, sizeof(uptime_day), "%ud", uptime.days);
