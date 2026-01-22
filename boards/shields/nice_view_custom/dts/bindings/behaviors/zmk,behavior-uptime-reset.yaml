@@ -2,4 +2,9 @@ description: Behavior to reset uptime counter
 
 compatible: "zmk,behavior-uptime-reset"
 
-include: one_param.yaml
+include: base.yaml
+
+properties:
+  "#binding-cells":
+    type: int
+    const: 0
