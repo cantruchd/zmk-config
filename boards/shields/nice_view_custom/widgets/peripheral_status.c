@@ -420,7 +420,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     uptime_info_t uptime;
     int64_t total_ms = uptime_get_total_ms();
     uptime_to_dhms(&uptime, total_ms);
-    snprintf(uptime_day, sizeof(uptime_day), "%ud", uptime.days);
+    snprintf(uptime_day, sizeof(uptime_day), "%dd", uptime.days);
     snprintf(uptime_hourmin, sizeof(uptime_hourmin), "%02d:%02d", uptime.hours, uptime.minutes);
 
     LOG_WRN("Drawing uptime: %s %s", uptime_day, uptime_hourmin);
