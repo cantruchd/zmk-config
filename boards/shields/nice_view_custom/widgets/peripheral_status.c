@@ -40,6 +40,7 @@ char logtext[10];
 
 int uptime_save(void);
 int64_t uptime_get_total_ms(void);
+static void check_auto_reset_uptime(uint8_t battery_level, bool is_charging);
 // Lưu trữ cấu trúc sensor đầy đủ
 static struct sensor_value current_temp_val = {0};
 static bool temp_data_valid = false;
