@@ -449,11 +449,12 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     lv_draw_rect_dsc_t rect_black_dsc;
     init_rect_dsc(&rect_black_dsc, LVGL_BACKGROUND);
     
-    lv_draw_label_dsc_t label_dsc_v, label_dsc_v_label, label_dsc_v_label_uptime;
+    lv_draw_label_dsc_t label_dsc_v, label_dsc_v_label, label_dsc_v_label_uptime_day, label_dsc_v_label_uptime_hourmin;
     init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_LEFT);
     init_label_dsc(&label_dsc_v_label, LVGL_FOREGROUND, &lv_font_montserrat_24, LV_TEXT_ALIGN_RIGHT);
 
-    init_label_dsc(&label_dsc_v_label_uptime, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_CENTER);
+    init_label_dsc(&label_dsc_v_label_uptime_day, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_CENTER);
+    init_label_dsc(&label_dsc_v_label_uptime_hourmin, LVGL_FOREGROUND, &lv_font_montserrat_24, LV_TEXT_ALIGN_CENTER);
 
     lv_canvas_draw_rect(canvas, 0, 0, MIDDLE_WIDTH, MIDDLE_HEIGHT, &rect_black_dsc);
 
@@ -491,8 +492,8 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     snprintf(uptime_hourmin, sizeof(uptime_hourmin), "%02d:%02d", uptime.hours, uptime.minutes);
 
     LOG_WRN("Drawing uptime: %s %s", uptime_day, uptime_hourmin);
-    lv_canvas_draw_text(canvas, 0, 22, MIDDLE_WIDTH, &label_dsc_v_label_uptime, uptime_day);
-    lv_canvas_draw_text(canvas, 0, 44, MIDDLE_WIDTH, &label_dsc_v_label_uptime, uptime_hourmin);
+    lv_canvas_draw_text(canvas, 0, 22, MIDDLE_WIDTH, &label_dsc_v_label_uptime_day, uptime_day);
+    lv_canvas_draw_text(canvas, 0, 44, MIDDLE_WIDTH, &label_dsc_v_label_uptime_hourmin, uptime_hourmin);
 
     rotate_canvas(canvas, cbuf);
 
