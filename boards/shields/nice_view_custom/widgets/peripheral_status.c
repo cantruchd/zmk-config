@@ -304,11 +304,14 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
         snprintf(v_text, sizeof(v_text), logtext);
     }
 
-    LOG_DBG("Drawing voltage: %s V", v_text);
-    k_sleep(K_MSEC(10000)); // Small delay to ensure proper rendering
+    
     
     lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v, v_text);
     lv_canvas_draw_text(canvas, 0, 0, MIDDLE_WIDTH, &label_dsc_v_label, v_label);
+
+
+    LOG_DBG("Drawing voltage: %s V", v_text);
+    k_sleep(K_MSEC(10000)); // Small delay to ensure proper rendering
 
     // draw uptime
     char uptime_day[10];
