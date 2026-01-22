@@ -318,7 +318,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     char uptime_hourmin[10];
 
     uptime_info_t uptime;
-    uptime_rtc_to_dhms(&uptime);
+    //uptime_rtc_to_dhms(&uptime);
     snprintf(uptime_day, sizeof(uptime_day), "%ud", uptime.days);
     snprintf(uptime_hourmin, sizeof(uptime_hourmin), "%02d:%02d", uptime.hours, uptime.minutes);
 
