@@ -212,9 +212,9 @@ int uptime_rtc_init(void) {
 
 // Lấy uptime tính bằng milliseconds
 int64_t uptime_rtc_get_ms(void) {
-    if (!rtc_initialized) {
-        return -EINVAL;
-    }
+    // if (!rtc_initialized) {
+    //     return -EINVAL;
+    // }
     
     uint32_t current_ticks;
     int ret = counter_get_value(rtc_dev, &current_ticks);
@@ -484,7 +484,7 @@ ZMK_SUBSCRIPTION(widget_temperature, zmk_activity_state_changed);
 int zmk_widget_status_init(struct zmk_widget_status *widget, lv_obj_t *parent) {
 
 
-    uptime_rtc_init();
+    // uptime_rtc_init();
 
     LOG_INF("=== Init nice_view with temperature ===");
     
