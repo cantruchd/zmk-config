@@ -224,14 +224,14 @@ int64_t uptime_rtc_get_ms(void) {
     }
     
     // Tính elapsed ticks (xử lý overflow)
-    uint32_t elapsed_ticks;
-    if (current_ticks >= rtc_start_ticks) {
-        elapsed_ticks = current_ticks - rtc_start_ticks;
-    } else {
-        // RTC0 trên nRF52 là 24-bit counter
-        uint32_t top_value = counter_get_top_value(rtc_dev);
-        elapsed_ticks = (top_value - rtc_start_ticks) + current_ticks + 1;
-    }
+    uint32_t elapsed_ticks = current_ticks - rtc_start_ticks;
+    // if (current_ticks >= rtc_start_ticks) {
+    //     elapsed_ticks = current_ticks - rtc_start_ticks;
+    // } else {
+    //     // RTC0 trên nRF52 là 24-bit counter
+    //     uint32_t top_value = counter_get_top_value(rtc_dev);
+    //     elapsed_ticks = (top_value - rtc_start_ticks) + current_ticks + 1;
+    // }
     
     // Chuyển đổi: ticks -> milliseconds
     // elapsed_ms = (elapsed_ticks * 1000) / 32768
