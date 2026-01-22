@@ -386,7 +386,7 @@ static void draw_middle(lv_obj_t *canvas, lv_color_t cbuf[]) {
     init_label_dsc(&label_dsc_v, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_LEFT);
     init_label_dsc(&label_dsc_v_label, LVGL_FOREGROUND, &lv_font_montserrat_24, LV_TEXT_ALIGN_RIGHT);
 
-    init_label_dsc(&label_dsc_v_label_uptime, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_MIDDLE);
+    init_label_dsc(&label_dsc_v_label_uptime, LVGL_FOREGROUND, &lv_font_montserrat_26, LV_TEXT_ALIGN_CENTER);
 
     lv_canvas_draw_rect(canvas, 0, 0, MIDDLE_WIDTH, MIDDLE_HEIGHT, &rect_black_dsc);
 
