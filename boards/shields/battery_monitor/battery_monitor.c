@@ -445,7 +445,13 @@ static K_MUTEX_DEFINE(ir_mutex);
 // Default minimum interval (10 minutes)
 #define IR_DEFAULT_MIN_INTERVAL_MS 600000
 
+// ============================================================================
+// Forward declarations
+// ============================================================================
+static void ir_carrier_on(uint32_t duration_us);
+static void ir_carrier_off(uint32_t duration_us);
 static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes);
+static int save_ir_commands(void) 
 
 // ============================================================================
 // IR AUTO CONTROL LOGIC (thêm function mới)
