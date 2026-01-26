@@ -452,6 +452,9 @@ static void ir_carrier_on(uint32_t duration_us);
 static void ir_carrier_off(uint32_t duration_us);
 static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes);
 static int save_ir_commands(void);
+static int save_ir_auto_rules(void);
+static int save_ir_auto_state(void);
+
 
 
 // ============================================================================
