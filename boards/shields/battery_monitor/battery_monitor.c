@@ -76,6 +76,240 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 #define BOND_ALIAS_MAX_LEN 32
 
 
+
+ 
+
+
+// ============================================================================
+// BLE UUIDs
+// ============================================================================
+
+// ============================================================================
+// Standard BLE UUIDs (Bluetooth SIG)
+// ============================================================================
+
+// // Battery Service (0x180F) - Standard Bluetooth SIG
+// #define BT_UUID_BAS_VAL 0x180F
+// #define BT_UUID_BAS \
+//     BT_UUID_DECLARE_16(BT_UUID_BAS_VAL)
+
+// // Battery Level Characteristic (0x2A19) - Standard Bluetooth SIG
+// #define BT_UUID_BAS_BATTERY_LEVEL_VAL 0x2A19
+// #define BT_UUID_BAS_BATTERY_LEVEL \
+//     BT_UUID_DECLARE_16(BT_UUID_BAS_BATTERY_LEVEL_VAL)
+
+
+
+#define BT_UUID_CUSTOM_SERVICE_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef0)
+#define BT_UUID_CUSTOM_SERVICE \
+    BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERVICE_VAL)
+
+#define BT_UUID_POWER_CONTROL_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef1)
+#define BT_UUID_POWER_CONTROL \
+    BT_UUID_DECLARE_128(BT_UUID_POWER_CONTROL_VAL)
+
+#define BT_UUID_TEMP_INTERNAL_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef2)
+#define BT_UUID_TEMP_INTERNAL \
+    BT_UUID_DECLARE_128(BT_UUID_TEMP_INTERNAL_VAL)
+
+#define BT_UUID_VOLTAGE_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef3)
+#define BT_UUID_VOLTAGE \
+    BT_UUID_DECLARE_128(BT_UUID_VOLTAGE_VAL)
+
+#define BT_UUID_BOOTLOADER_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef4)
+#define BT_UUID_BOOTLOADER \
+    BT_UUID_DECLARE_128(BT_UUID_BOOTLOADER_VAL)
+
+#define BT_UUID_TEMP_EXTERNAL_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef5)
+#define BT_UUID_TEMP_EXTERNAL \
+    BT_UUID_DECLARE_128(BT_UUID_TEMP_EXTERNAL_VAL)
+
+#define BT_UUID_AUTO_SETTINGS_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef6)
+#define BT_UUID_AUTO_SETTINGS \
+    BT_UUID_DECLARE_128(BT_UUID_AUTO_SETTINGS_VAL)
+
+#define BT_UUID_TEMP_SETTINGS_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef7)
+#define BT_UUID_TEMP_SETTINGS \
+    BT_UUID_DECLARE_128(BT_UUID_TEMP_SETTINGS_VAL)
+
+
+#define BT_UUID_BOND_MANAGEMENT_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef8)
+#define BT_UUID_BOND_MANAGEMENT \
+    BT_UUID_DECLARE_128(BT_UUID_BOND_MANAGEMENT_VAL)
+
+
+
+
+
+// Commands
+#define CMD_POWER_OFF    0x00
+#define CMD_POWER_ON     0x01
+#define CMD_POWER_TOGGLE 0x02
+#define CMD_ENTER_BOOTLOADER 0x42
+#define CMD_RESET_DEVICE     0x52
+
+static uint8_t last_battery_percent = 100;
+
+
+
+
+// ============================================================================
+// Multi bonds
+// ============================================================================
+struct bond_info {
+    bt_addr_le_t addr;
+    char alias[BOND_ALIAS_MAX_LEN];
+    bool is_connected;
+};
+
+struct bond_management_data {
+    uint8_t cmd;           // 0x01=list, 0x02=set_alias, 0x03=delete
+    uint8_t bond_index;    // Index của bond
+    char alias[BOND_ALIAS_MAX_LEN];
+} __packed;
+
+static struct bt_conn *active_conns[MAX_CONNECTIONS];
+static struct bond_info bond_list[CONFIG_BT_MAX_PAIRED];
+static uint8_t bond_count = 0;
+static K_MUTEX_DEFINE(conn_mutex);
+
+static void security_changed(struct bt_conn *conn, bt_security_t level,
+                             enum bt_security_err err);
+
+
+// ============================================================================
+// ADC Configuration
+// ============================================================================
+
+#if !DT_NODE_EXISTS(DT_PATH(zephyr_user)) || \
+    !DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels)
+#error "No suitable devicetree overlay specified"
+#endif
+
+#define DT_SPEC_AND_COMMA(node_id, prop, idx) \
+    ADC_DT_SPEC_GET_BY_IDX(node_id, idx),
+
+static const struct adc_dt_spec adc_channels[] = {
+    DT_FOREACH_PROP_ELEM(DT_PATH(zephyr_user), io_channels, DT_SPEC_AND_COMMA)
+};
+
+// ============================================================================
+// Settings Structure
+// ============================================================================
+
+struct auto_mosfet_settings {
+    bool auto_on_enabled;
+    bool auto_off_enabled;
+    uint8_t auto_on_percent;
+    uint8_t auto_off_percent;
+    uint8_t storage_percent;
+    // Reverse settings
+    bool reverse_off_enabled;
+    uint8_t reverse_off_percent;
+    bool reverse_on_enabled;
+    uint8_t reverse_on_percent;
+};
+
+struct temp_protection_settings {
+    bool int_high_enabled;
+    int16_t int_high_threshold;  // in hundredths °C
+    bool int_low_enabled;
+    int16_t int_low_threshold;   // in hundredths °C
+    bool ext_high_enabled;
+    int16_t ext_high_threshold;  // in hundredths °C
+    bool ext_low_enabled;
+    int16_t ext_low_threshold;   // in hundredths °C
+};
+
+// ============================================================================
+// Global Variables
+// ============================================================================
+
+static const struct device *gpio_dev;
+static const struct device *temp_dev;
+static const struct device *battery_dev;
+static bool power_state = false;
+
+
+static int16_t temp_internal = 0;
+static int16_t temp_external = 0;
+static uint16_t current_voltage_mv = 0;
+
+static bool auto_update_active = false;
+static int64_t auto_update_start_time = 0;
+static struct k_work_delayable update_work;
+static struct k_work_delayable bootloader_work;
+
+static enum sensor_channel discovered_channel = SENSOR_CHAN_PRIV_START;
+
+static struct auto_mosfet_settings auto_settings = {
+    .auto_on_enabled = DEFAULT_AUTO_ON_ENABLE,
+    .auto_off_enabled = DEFAULT_AUTO_OFF_ENABLE,
+    .auto_on_percent = DEFAULT_AUTO_ON_PERCENT,
+    .auto_off_percent = DEFAULT_AUTO_OFF_PERCENT,
+    .storage_percent = DEFAULT_STORAGE_PERCENT,
+    .reverse_off_enabled = DEFAULT_REVERSE_OFF_ENABLE,
+    .reverse_off_percent = DEFAULT_REVERSE_OFF_PERCENT,
+    .reverse_on_enabled = DEFAULT_REVERSE_ON_ENABLE,
+    .reverse_on_percent = DEFAULT_REVERSE_ON_PERCENT,
+};
+
+static struct temp_protection_settings temp_settings = {
+    .int_high_enabled = DEFAULT_TEMP_INT_HIGH_ENABLE,
+    .int_high_threshold = DEFAULT_TEMP_INT_HIGH_THRESHOLD,
+    .int_low_enabled = DEFAULT_TEMP_INT_LOW_ENABLE,
+    .int_low_threshold = DEFAULT_TEMP_INT_LOW_THRESHOLD,
+    .ext_high_enabled = DEFAULT_TEMP_EXT_HIGH_ENABLE,
+    .ext_high_threshold = DEFAULT_TEMP_EXT_HIGH_THRESHOLD,
+    .ext_low_enabled = DEFAULT_TEMP_EXT_LOW_ENABLE,
+    .ext_low_threshold = DEFAULT_TEMP_EXT_LOW_THRESHOLD,
+};
+
+extern const struct bt_gatt_service_static battery_monitor_svc;
+extern const struct bt_gatt_service_static bas_svc;  // ⭐ THÊM dòng này
+
+// Forward declarations
+static ssize_t read_power_control(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset);
+static ssize_t write_power_control(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                    const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
+static ssize_t read_temp_internal(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset);
+static ssize_t read_temp_external(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset);
+static ssize_t read_voltage(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                             void *buf, uint16_t len, uint16_t offset);
+static ssize_t write_bootloader(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                 const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
+static ssize_t read_auto_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset);
+static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                    const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
+static ssize_t read_temp_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset);
+static ssize_t write_temp_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                    const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
+
+// THÊM 2 DÒNG NÀY:
+static ssize_t read_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                     void *buf, uint16_t len, uint16_t offset);
+static ssize_t write_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                      const void *buf, uint16_t len, uint16_t offset, uint8_t flags);     
+                                      
+static void switch_to_next_available_profile(void);
+
+static uint8_t voltage_to_percent(uint16_t voltage_mv);
+static void start_auto_updates(void);
+
 // ============================================================================
 // IR TRANSMISSION FUNCTIONS
 // ============================================================================// ============================================================================
@@ -886,238 +1120,6 @@ static int save_ir_auto_state(void) {
 
 
 
- 
-
-
-// ============================================================================
-// BLE UUIDs
-// ============================================================================
-
-// ============================================================================
-// Standard BLE UUIDs (Bluetooth SIG)
-// ============================================================================
-
-// // Battery Service (0x180F) - Standard Bluetooth SIG
-// #define BT_UUID_BAS_VAL 0x180F
-// #define BT_UUID_BAS \
-//     BT_UUID_DECLARE_16(BT_UUID_BAS_VAL)
-
-// // Battery Level Characteristic (0x2A19) - Standard Bluetooth SIG
-// #define BT_UUID_BAS_BATTERY_LEVEL_VAL 0x2A19
-// #define BT_UUID_BAS_BATTERY_LEVEL \
-//     BT_UUID_DECLARE_16(BT_UUID_BAS_BATTERY_LEVEL_VAL)
-
-
-
-#define BT_UUID_CUSTOM_SERVICE_VAL \
-    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef0)
-#define BT_UUID_CUSTOM_SERVICE \
-    BT_UUID_DECLARE_128(BT_UUID_CUSTOM_SERVICE_VAL)
-
-#define BT_UUID_POWER_CONTROL_VAL \
-    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef1)
-#define BT_UUID_POWER_CONTROL \
-    BT_UUID_DECLARE_128(BT_UUID_POWER_CONTROL_VAL)
-
-#define BT_UUID_TEMP_INTERNAL_VAL \
-    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef2)
-#define BT_UUID_TEMP_INTERNAL \
-    BT_UUID_DECLARE_128(BT_UUID_TEMP_INTERNAL_VAL)
-
-#define BT_UUID_VOLTAGE_VAL \
-    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef3)
-#define BT_UUID_VOLTAGE \
-    BT_UUID_DECLARE_128(BT_UUID_VOLTAGE_VAL)
-
-#define BT_UUID_BOOTLOADER_VAL \
-    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef4)
-#define BT_UUID_BOOTLOADER \
-    BT_UUID_DECLARE_128(BT_UUID_BOOTLOADER_VAL)
-
-#define BT_UUID_TEMP_EXTERNAL_VAL \
-    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef5)
-#define BT_UUID_TEMP_EXTERNAL \
-    BT_UUID_DECLARE_128(BT_UUID_TEMP_EXTERNAL_VAL)
-
-#define BT_UUID_AUTO_SETTINGS_VAL \
-    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef6)
-#define BT_UUID_AUTO_SETTINGS \
-    BT_UUID_DECLARE_128(BT_UUID_AUTO_SETTINGS_VAL)
-
-#define BT_UUID_TEMP_SETTINGS_VAL \
-    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef7)
-#define BT_UUID_TEMP_SETTINGS \
-    BT_UUID_DECLARE_128(BT_UUID_TEMP_SETTINGS_VAL)
-
-
-#define BT_UUID_BOND_MANAGEMENT_VAL \
-    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef8)
-#define BT_UUID_BOND_MANAGEMENT \
-    BT_UUID_DECLARE_128(BT_UUID_BOND_MANAGEMENT_VAL)
-
-
-
-
-
-// Commands
-#define CMD_POWER_OFF    0x00
-#define CMD_POWER_ON     0x01
-#define CMD_POWER_TOGGLE 0x02
-#define CMD_ENTER_BOOTLOADER 0x42
-#define CMD_RESET_DEVICE     0x52
-
-static uint8_t last_battery_percent = 100;
-
-
-
-
-// ============================================================================
-// Multi bonds
-// ============================================================================
-struct bond_info {
-    bt_addr_le_t addr;
-    char alias[BOND_ALIAS_MAX_LEN];
-    bool is_connected;
-};
-
-struct bond_management_data {
-    uint8_t cmd;           // 0x01=list, 0x02=set_alias, 0x03=delete
-    uint8_t bond_index;    // Index của bond
-    char alias[BOND_ALIAS_MAX_LEN];
-} __packed;
-
-static struct bt_conn *active_conns[MAX_CONNECTIONS];
-static struct bond_info bond_list[CONFIG_BT_MAX_PAIRED];
-static uint8_t bond_count = 0;
-static K_MUTEX_DEFINE(conn_mutex);
-
-static void security_changed(struct bt_conn *conn, bt_security_t level,
-                             enum bt_security_err err);
-
-
-// ============================================================================
-// ADC Configuration
-// ============================================================================
-
-#if !DT_NODE_EXISTS(DT_PATH(zephyr_user)) || \
-    !DT_NODE_HAS_PROP(DT_PATH(zephyr_user), io_channels)
-#error "No suitable devicetree overlay specified"
-#endif
-
-#define DT_SPEC_AND_COMMA(node_id, prop, idx) \
-    ADC_DT_SPEC_GET_BY_IDX(node_id, idx),
-
-static const struct adc_dt_spec adc_channels[] = {
-    DT_FOREACH_PROP_ELEM(DT_PATH(zephyr_user), io_channels, DT_SPEC_AND_COMMA)
-};
-
-// ============================================================================
-// Settings Structure
-// ============================================================================
-
-struct auto_mosfet_settings {
-    bool auto_on_enabled;
-    bool auto_off_enabled;
-    uint8_t auto_on_percent;
-    uint8_t auto_off_percent;
-    uint8_t storage_percent;
-    // Reverse settings
-    bool reverse_off_enabled;
-    uint8_t reverse_off_percent;
-    bool reverse_on_enabled;
-    uint8_t reverse_on_percent;
-};
-
-struct temp_protection_settings {
-    bool int_high_enabled;
-    int16_t int_high_threshold;  // in hundredths °C
-    bool int_low_enabled;
-    int16_t int_low_threshold;   // in hundredths °C
-    bool ext_high_enabled;
-    int16_t ext_high_threshold;  // in hundredths °C
-    bool ext_low_enabled;
-    int16_t ext_low_threshold;   // in hundredths °C
-};
-
-// ============================================================================
-// Global Variables
-// ============================================================================
-
-static const struct device *gpio_dev;
-static const struct device *temp_dev;
-static const struct device *battery_dev;
-static bool power_state = false;
-
-
-static int16_t temp_internal = 0;
-static int16_t temp_external = 0;
-static uint16_t current_voltage_mv = 0;
-
-static bool auto_update_active = false;
-static int64_t auto_update_start_time = 0;
-static struct k_work_delayable update_work;
-static struct k_work_delayable bootloader_work;
-
-static enum sensor_channel discovered_channel = SENSOR_CHAN_PRIV_START;
-
-static struct auto_mosfet_settings auto_settings = {
-    .auto_on_enabled = DEFAULT_AUTO_ON_ENABLE,
-    .auto_off_enabled = DEFAULT_AUTO_OFF_ENABLE,
-    .auto_on_percent = DEFAULT_AUTO_ON_PERCENT,
-    .auto_off_percent = DEFAULT_AUTO_OFF_PERCENT,
-    .storage_percent = DEFAULT_STORAGE_PERCENT,
-    .reverse_off_enabled = DEFAULT_REVERSE_OFF_ENABLE,
-    .reverse_off_percent = DEFAULT_REVERSE_OFF_PERCENT,
-    .reverse_on_enabled = DEFAULT_REVERSE_ON_ENABLE,
-    .reverse_on_percent = DEFAULT_REVERSE_ON_PERCENT,
-};
-
-static struct temp_protection_settings temp_settings = {
-    .int_high_enabled = DEFAULT_TEMP_INT_HIGH_ENABLE,
-    .int_high_threshold = DEFAULT_TEMP_INT_HIGH_THRESHOLD,
-    .int_low_enabled = DEFAULT_TEMP_INT_LOW_ENABLE,
-    .int_low_threshold = DEFAULT_TEMP_INT_LOW_THRESHOLD,
-    .ext_high_enabled = DEFAULT_TEMP_EXT_HIGH_ENABLE,
-    .ext_high_threshold = DEFAULT_TEMP_EXT_HIGH_THRESHOLD,
-    .ext_low_enabled = DEFAULT_TEMP_EXT_LOW_ENABLE,
-    .ext_low_threshold = DEFAULT_TEMP_EXT_LOW_THRESHOLD,
-};
-
-extern const struct bt_gatt_service_static battery_monitor_svc;
-extern const struct bt_gatt_service_static bas_svc;  // ⭐ THÊM dòng này
-
-// Forward declarations
-static ssize_t read_power_control(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                   void *buf, uint16_t len, uint16_t offset);
-static ssize_t write_power_control(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                    const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
-static ssize_t read_temp_internal(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                   void *buf, uint16_t len, uint16_t offset);
-static ssize_t read_temp_external(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                   void *buf, uint16_t len, uint16_t offset);
-static ssize_t read_voltage(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                             void *buf, uint16_t len, uint16_t offset);
-static ssize_t write_bootloader(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                 const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
-static ssize_t read_auto_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                   void *buf, uint16_t len, uint16_t offset);
-static ssize_t write_auto_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                    const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
-static ssize_t read_temp_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                   void *buf, uint16_t len, uint16_t offset);
-static ssize_t write_temp_settings(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                    const void *buf, uint16_t len, uint16_t offset, uint8_t flags);
-
-// THÊM 2 DÒNG NÀY:
-static ssize_t read_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                     void *buf, uint16_t len, uint16_t offset);
-static ssize_t write_bond_management(struct bt_conn *conn, const struct bt_gatt_attr *attr,
-                                      const void *buf, uint16_t len, uint16_t offset, uint8_t flags);     
-                                      
-static void switch_to_next_available_profile(void);
-
-static uint8_t voltage_to_percent(uint16_t voltage_mv);
-static void start_auto_updates(void);
 
 // ============================================================================
 // Battery Level Handlers (Standard BLE Battery Service)
