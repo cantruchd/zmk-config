@@ -802,6 +802,30 @@ static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *
         // Save to NVS
         save_ir_commands();
     }
+    else if (operation == 0x03) { // Execute command
+        LOG_INF("Attempting to execute IR Command ID %u", cmd_id);
+        struct ir_command *cmd = find_ir_command(cmd_id);
+        if (cmd == NULL) {
+            LOG_ERR("IR Command ID %u not found for execution", cmd_id);
+            k_mutex_unlock(&ir_mutex);
+            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+        }
+        
+        if (cmd->data_len == 0) {
+            LOG_WRN("IR Command ID %u has no data to send", cmd_id);
+            k_mutex_unlock(&ir_mutex);
+            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+        }
+
+        int ret = ir_send_raw_data(cmd->data, cmd->data_len);
+        if (ret == 0) {
+            LOG_INF("✅ Executed IR Command ID %u: '%s'", cmd_id, cmd->description);
+        } else {
+            LOG_ERR("❌ Failed to execute IR Command ID %u: %d", cmd_id, ret);
+            k_mutex_unlock(&ir_mutex);
+            return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+        }
+    }
     
     k_mutex_unlock(&ir_mutex);
     
