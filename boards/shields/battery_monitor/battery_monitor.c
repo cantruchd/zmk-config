@@ -445,6 +445,8 @@ static K_MUTEX_DEFINE(ir_mutex);
 // Default minimum interval (10 minutes)
 #define IR_DEFAULT_MIN_INTERVAL_MS 600000
 
+static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes);
+
 // ============================================================================
 // IR AUTO CONTROL LOGIC (thêm function mới)
 // ============================================================================
@@ -473,7 +475,7 @@ static void check_ir_auto_control(void) {
         if (!rule->enabled) continue;
         
         // Kiểm tra nhiệt độ có nằm trong khoảng không
-        if (temp_external >= rule->temp_min && temp_external < rule->temp_max) {
+        if (temp_internal >= rule->temp_min && temp_internal < rule->temp_max) {
             // Check minimum interval
             int64_t elapsed = now - rule->last_sent_time;
             uint32_t min_interval = rule->min_interval_ms > 0 ? 
@@ -499,7 +501,7 @@ static void check_ir_auto_control(void) {
             
             LOG_INF("❄️ Auto Rule %d matched:", i);
             LOG_INF("   Temp %d.%02d°C in range [%d.%02d, %d.%02d)", 
-                    temp_external / 100, abs(temp_external % 100),
+                    temp_internal / 100, abs(temp_internal % 100),
                     rule->temp_min / 100, abs(rule->temp_min % 100),
                     rule->temp_max / 100, abs(rule->temp_max % 100));
             LOG_INF("   Sending Command %u: %s", cmd->cmd_id, cmd->description);
@@ -1222,6 +1224,43 @@ static int settings_set_all(const char *name, size_t len, settings_read_cb read_
         LOG_DBG("Loaded temperature settings from NVS");  // ⭐ Đổi thành DBG
         return 0;
     }
+
+     // IR commands database
+    if (settings_name_steq(name, "ir_cmds", &next) && !next) {
+        if (len > sizeof(ir_commands)) return -EINVAL;
+        
+        if (read_cb(cb_arg, ir_commands, len) != len) {
+            return -EINVAL;
+        }
+        
+        ir_cmd_count = len / sizeof(struct ir_command);
+        LOG_DBG("Loaded %d IR commands from NVS", ir_cmd_count);
+        return 0;
+    }
+    
+    // IR auto rules
+    if (settings_name_steq(name, "ir_rules", &next) && !next) {
+        if (len != sizeof(ir_auto_rules)) return -EINVAL;
+        
+        if (read_cb(cb_arg, ir_auto_rules, sizeof(ir_auto_rules)) != sizeof(ir_auto_rules)) {
+            return -EINVAL;
+        }
+        
+        LOG_DBG("Loaded IR auto rules from NVS");
+        return 0;
+    }
+    
+    // IR auto state
+    if (settings_name_steq(name, "ir_state", &next) && !next) {
+        if (len != sizeof(ir_auto_state)) return -EINVAL;
+        
+        if (read_cb(cb_arg, &ir_auto_state, sizeof(ir_auto_state)) != sizeof(ir_auto_state)) {
+            return -EINVAL;
+        }
+        
+        LOG_DBG("Loaded IR auto state from NVS");
+        return 0;
+    }
     
     // Bond aliases
     if (settings_name_steq(name, "bonds", &next) && !next) {
@@ -1304,95 +1343,95 @@ SETTINGS_STATIC_HANDLER_DEFINE(
     NULL                // Export callback
 );
 
-// ============================================================================
-// Settings Management (using Zephyr Settings API like ZMK Studio)
-// ============================================================================
+// // ============================================================================
+// // Settings Management (using Zephyr Settings API like ZMK Studio)
+// // ============================================================================
 
-static int settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
-    const char *next;
+// static int settings_set(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg) {
+//     const char *next;
     
-    // Battery settings
-    if (settings_name_steq(name, "cfg", &next) && !next) {
-        if (len != 9) {
-            return -EINVAL;
-        }
+//     // Battery settings
+//     if (settings_name_steq(name, "cfg", &next) && !next) {
+//         if (len != 9) {
+//             return -EINVAL;
+//         }
         
-        uint8_t data[9];
-        if (read_cb(cb_arg, data, sizeof(data)) != sizeof(data)) {
-            return -EINVAL;
-        }
+//         uint8_t data[9];
+//         if (read_cb(cb_arg, data, sizeof(data)) != sizeof(data)) {
+//             return -EINVAL;
+//         }
         
-        auto_settings.auto_on_enabled = (data[0] != 0);
-        auto_settings.auto_off_enabled = (data[1] != 0);
-        auto_settings.auto_on_percent = data[2];
-        auto_settings.auto_off_percent = data[3];
-        auto_settings.storage_percent = data[4];
-        auto_settings.reverse_off_enabled = (data[5] != 0);
-        auto_settings.reverse_off_percent = data[6];
-        auto_settings.reverse_on_enabled = (data[7] != 0);
-        auto_settings.reverse_on_percent = data[8];
+//         auto_settings.auto_on_enabled = (data[0] != 0);
+//         auto_settings.auto_off_enabled = (data[1] != 0);
+//         auto_settings.auto_on_percent = data[2];
+//         auto_settings.auto_off_percent = data[3];
+//         auto_settings.storage_percent = data[4];
+//         auto_settings.reverse_off_enabled = (data[5] != 0);
+//         auto_settings.reverse_off_percent = data[6];
+//         auto_settings.reverse_on_enabled = (data[7] != 0);
+//         auto_settings.reverse_on_percent = data[8];
         
-        LOG_INF("Battery settings loaded from NVS:");
-        LOG_INF("  Auto ON: %s at <%d%%", 
-                auto_settings.auto_on_enabled ? "ENABLED" : "DISABLED",
-                auto_settings.auto_on_percent);
-        LOG_INF("  Auto OFF: %s at >%d%%", 
-                auto_settings.auto_off_enabled ? "ENABLED" : "DISABLED",
-                auto_settings.auto_off_percent);
-        LOG_INF("  Storage: %d%%", auto_settings.storage_percent);
-        LOG_INF("  Reverse OFF: %s at <%d%%", 
-                auto_settings.reverse_off_enabled ? "ENABLED" : "DISABLED",
-                auto_settings.reverse_off_percent);
-        LOG_INF("  Reverse ON: %s at >%d%%", 
-                auto_settings.reverse_on_enabled ? "ENABLED" : "DISABLED",
-                auto_settings.reverse_on_percent);
+//         LOG_INF("Battery settings loaded from NVS:");
+//         LOG_INF("  Auto ON: %s at <%d%%", 
+//                 auto_settings.auto_on_enabled ? "ENABLED" : "DISABLED",
+//                 auto_settings.auto_on_percent);
+//         LOG_INF("  Auto OFF: %s at >%d%%", 
+//                 auto_settings.auto_off_enabled ? "ENABLED" : "DISABLED",
+//                 auto_settings.auto_off_percent);
+//         LOG_INF("  Storage: %d%%", auto_settings.storage_percent);
+//         LOG_INF("  Reverse OFF: %s at <%d%%", 
+//                 auto_settings.reverse_off_enabled ? "ENABLED" : "DISABLED",
+//                 auto_settings.reverse_off_percent);
+//         LOG_INF("  Reverse ON: %s at >%d%%", 
+//                 auto_settings.reverse_on_enabled ? "ENABLED" : "DISABLED",
+//                 auto_settings.reverse_on_percent);
         
-        return 0;
-    }
+//         return 0;
+//     }
     
-    // Temperature settings
-    if (settings_name_steq(name, "temp", &next) && !next) {
-        if (len != 12) {
-            return -EINVAL;
-        }
+//     // Temperature settings
+//     if (settings_name_steq(name, "temp", &next) && !next) {
+//         if (len != 12) {
+//             return -EINVAL;
+//         }
         
-        uint8_t data[12];
-        if (read_cb(cb_arg, data, sizeof(data)) != sizeof(data)) {
-            return -EINVAL;
-        }
+//         uint8_t data[12];
+//         if (read_cb(cb_arg, data, sizeof(data)) != sizeof(data)) {
+//             return -EINVAL;
+//         }
         
-        temp_settings.int_high_enabled = (data[0] != 0);
-        temp_settings.int_high_threshold = (int16_t)((data[1] << 8) | data[2]);
-        temp_settings.int_low_enabled = (data[3] != 0);
-        temp_settings.int_low_threshold = (int16_t)((data[4] << 8) | data[5]);
-        temp_settings.ext_high_enabled = (data[6] != 0);
-        temp_settings.ext_high_threshold = (int16_t)((data[7] << 8) | data[8]);
-        temp_settings.ext_low_enabled = (data[9] != 0);
-        temp_settings.ext_low_threshold = (int16_t)((data[10] << 8) | data[11]);
+//         temp_settings.int_high_enabled = (data[0] != 0);
+//         temp_settings.int_high_threshold = (int16_t)((data[1] << 8) | data[2]);
+//         temp_settings.int_low_enabled = (data[3] != 0);
+//         temp_settings.int_low_threshold = (int16_t)((data[4] << 8) | data[5]);
+//         temp_settings.ext_high_enabled = (data[6] != 0);
+//         temp_settings.ext_high_threshold = (int16_t)((data[7] << 8) | data[8]);
+//         temp_settings.ext_low_enabled = (data[9] != 0);
+//         temp_settings.ext_low_threshold = (int16_t)((data[10] << 8) | data[11]);
         
-        LOG_INF("Temperature settings loaded from NVS:");
-        LOG_INF("  Internal High: %s at >%d.%02d°C", 
-                temp_settings.int_high_enabled ? "ENABLED" : "DISABLED",
-                temp_settings.int_high_threshold / 100,
-                abs(temp_settings.int_high_threshold % 100));
-        LOG_INF("  Internal Low: %s at <%d.%02d°C", 
-                temp_settings.int_low_enabled ? "ENABLED" : "DISABLED",
-                temp_settings.int_low_threshold / 100,
-                abs(temp_settings.int_low_threshold % 100));
-        LOG_INF("  External High: %s at >%d.%02d°C", 
-                temp_settings.ext_high_enabled ? "ENABLED" : "DISABLED",
-                temp_settings.ext_high_threshold / 100,
-                abs(temp_settings.ext_high_threshold % 100));
-        LOG_INF("  External Low: %s at <%d.%02d°C", 
-                temp_settings.ext_low_enabled ? "ENABLED" : "DISABLED",
-                temp_settings.ext_low_threshold / 100,
-                abs(temp_settings.ext_low_threshold % 100));
+//         LOG_INF("Temperature settings loaded from NVS:");
+//         LOG_INF("  Internal High: %s at >%d.%02d°C", 
+//                 temp_settings.int_high_enabled ? "ENABLED" : "DISABLED",
+//                 temp_settings.int_high_threshold / 100,
+//                 abs(temp_settings.int_high_threshold % 100));
+//         LOG_INF("  Internal Low: %s at <%d.%02d°C", 
+//                 temp_settings.int_low_enabled ? "ENABLED" : "DISABLED",
+//                 temp_settings.int_low_threshold / 100,
+//                 abs(temp_settings.int_low_threshold % 100));
+//         LOG_INF("  External High: %s at >%d.%02d°C", 
+//                 temp_settings.ext_high_enabled ? "ENABLED" : "DISABLED",
+//                 temp_settings.ext_high_threshold / 100,
+//                 abs(temp_settings.ext_high_threshold % 100));
+//         LOG_INF("  External Low: %s at <%d.%02d°C", 
+//                 temp_settings.ext_low_enabled ? "ENABLED" : "DISABLED",
+//                 temp_settings.ext_low_threshold / 100,
+//                 abs(temp_settings.ext_low_threshold % 100));
         
-        return 0;
-    }
+//         return 0;
+//     }
     
-    return -ENOENT;
-}
+//     return -ENOENT;
+// }
 
 // SETTINGS_STATIC_HANDLER_DEFINE(battery_monitor, SETTINGS_NAME, NULL, settings_set, NULL, NULL);
 
