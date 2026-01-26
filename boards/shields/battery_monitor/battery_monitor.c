@@ -7,6 +7,819 @@
  * No need to add CONFIG_SETTINGS or CONFIG_NVS - already in ZMK core!
  */
 
+
+
+// ============================================================================
+// IR TRANSMISSION FUNCTIONS
+// ============================================================================// ============================================================================
+// IR AC CONTROL - THÊM VÀO ĐẦU FILE (sau LOG_MODULE_DECLARE)
+// ============================================================================
+
+#include <zephyr/drivers/pwm.h>
+
+// IR LED Configuration
+#define IR_LED_PIN 25  // Chọn GPIO pin cho IR LED
+#define IR_CARRIER_FREQ 38000  // 38kHz carrier frequency
+
+// IR Timing (microseconds)
+#define IR_MARK_TIME  560   // Standard mark time
+#define IR_SPACE_TIME 560   // Space time for bit 0
+#define IR_ONE_SPACE  1690  // Space time for bit 1
+
+// Max IR data length (support up to 1024 bits = 128 bytes)
+#define MAX_IR_DATA_LEN 128
+
+// Auto control rules
+#define MAX_AUTO_RULES 50  // Tối đa 50 rules
+
+// ============================================================================
+// THÊM UUID CHO AC CONTROL (sau các UUID hiện tại)
+// ============================================================================
+
+// UUID cho IR Raw Data transmission
+#define BT_UUID_IR_RAW_DATA_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdef9)
+#define BT_UUID_IR_RAW_DATA \
+    BT_UUID_DECLARE_128(BT_UUID_IR_RAW_DATA_VAL)
+
+// UUID cho IR Status
+#define BT_UUID_IR_STATUS_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdefa)
+#define BT_UUID_IR_STATUS \
+    BT_UUID_DECLARE_128(BT_UUID_IR_STATUS_VAL)
+
+// UUID cho IR Command Database (lưu các IR codes với ID)
+#define BT_UUID_IR_CMD_DB_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdefb)
+#define BT_UUID_IR_CMD_DB \
+    BT_UUID_DECLARE_128(BT_UUID_IR_CMD_DB_VAL)
+
+// UUID cho Auto Rules Management
+#define BT_UUID_IR_AUTO_RULES_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdefc)
+#define BT_UUID_IR_AUTO_RULES \
+    BT_UUID_DECLARE_128(BT_UUID_IR_AUTO_RULES_VAL)
+
+// UUID cho Auto Control Enable/Disable
+#define BT_UUID_IR_AUTO_ENABLE_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdefd)
+#define BT_UUID_IR_AUTO_ENABLE \
+    BT_UUID_DECLARE_128(BT_UUID_IR_AUTO_ENABLE_VAL)
+
+// ============================================================================
+// THÊM STRUCTURE CHO IR DATA (sau temp_protection_settings)
+// ============================================================================
+
+struct ir_raw_data {
+    uint16_t data_len;           // Số byte dữ liệu
+    uint8_t data[MAX_IR_DATA_LEN]; // Raw IR data từ app
+    bool is_transmitting;        // Đang truyền IR
+};
+
+struct ir_status {
+    uint8_t last_result;  // 0=success, 1=error, 2=busy
+    uint16_t bits_sent;   // Số bit đã gửi
+};
+
+// IR Command Database - Lưu các IR codes với ID
+struct ir_command {
+    uint16_t cmd_id;             // Command ID (0-65535)
+    uint16_t data_len;           // Độ dài IR data
+    uint8_t data[MAX_IR_DATA_LEN]; // Raw IR data
+    char description[32];        // Mô tả: "Cool 24C", "Power Off", etc.
+};
+
+// Auto Rule - Nếu temp trong khoảng [temp_min, temp_max) thì gửi cmd_id
+struct ir_auto_rule {
+    uint8_t rule_id;             // Rule ID (0-49)
+    bool enabled;                // Enable/disable rule này
+    int16_t temp_min;            // Nhiệt độ tối thiểu (hundredths °C)
+    int16_t temp_max;            // Nhiệt độ tối đa (hundredths °C)
+    uint16_t cmd_id;             // Command ID cần gửi
+    uint32_t min_interval_ms;    // Khoảng cách tối thiểu giữa 2 lần gửi (mặc định 10 phút)
+    int64_t last_sent_time;      // Timestamp lần gửi cuối
+};
+
+// Global auto control state
+struct ir_auto_state {
+    bool global_enabled;         // Bật/tắt toàn bộ auto control
+    uint8_t active_rule_count;   // Số rule đang active
+    uint8_t last_matched_rule;   // Rule cuối cùng đã match
+};
+
+// ============================================================================
+// THÊM GLOBAL VARIABLES (sau temp_settings)
+// ============================================================================
+
+static struct ir_raw_data ir_data = {
+    .data_len = 0,
+    .is_transmitting = false
+};
+
+static struct ir_status ir_status = {
+    .last_result = 0,
+    .bits_sent = 0
+};
+
+// Command database - lưu tất cả IR commands
+// Sử dụng hash map hoặc array, ở đây dùng array đơn giản
+#define MAX_IR_COMMANDS 100
+static struct ir_command ir_commands[MAX_IR_COMMANDS] = {0};
+static uint8_t ir_cmd_count = 0;
+
+// Auto rules - tối đa 50 rules
+static struct ir_auto_rule ir_auto_rules[MAX_AUTO_RULES] = {0};
+
+// Global auto state
+static struct ir_auto_state ir_auto_state = {
+    .global_enabled = false,
+    .active_rule_count = 0,
+    .last_matched_rule = 0xFF
+};
+
+static const struct device *ir_pwm_dev;
+static struct k_work_delayable ir_work;
+static K_MUTEX_DEFINE(ir_mutex);
+
+// Default minimum interval (10 minutes)
+#define IR_DEFAULT_MIN_INTERVAL_MS 600000
+
+// ============================================================================
+// IR AUTO CONTROL LOGIC (thêm function mới)
+// ============================================================================
+
+// Helper: Tìm IR command theo ID
+static struct ir_command* find_ir_command(uint16_t cmd_id) {
+    for (int i = 0; i < ir_cmd_count; i++) {
+        if (ir_commands[i].cmd_id == cmd_id) {
+            return &ir_commands[i];
+        }
+    }
+    return NULL;
+}
+
+// Kiểm tra và thực thi auto rules dựa trên nhiệt độ
+static void check_ir_auto_control(void) {
+    if (!ir_auto_state.global_enabled) return;
+    
+    int64_t now = k_uptime_get();
+    
+    // Duyệt qua tất cả rules (theo thứ tự ưu tiên)
+    for (int i = 0; i < MAX_AUTO_RULES; i++) {
+        struct ir_auto_rule *rule = &ir_auto_rules[i];
+        
+        // Skip disabled rules
+        if (!rule->enabled) continue;
+        
+        // Kiểm tra nhiệt độ có nằm trong khoảng không
+        if (temp_external >= rule->temp_min && temp_external < rule->temp_max) {
+            // Check minimum interval
+            int64_t elapsed = now - rule->last_sent_time;
+            uint32_t min_interval = rule->min_interval_ms > 0 ? 
+                                   rule->min_interval_ms : IR_DEFAULT_MIN_INTERVAL_MS;
+            
+            if (elapsed < min_interval && rule->last_sent_time != 0) {
+                LOG_DBG("Rule %d: Too soon (elapsed %lld ms < %u ms)", 
+                        i, elapsed, min_interval);
+                continue;  // Too soon
+            }
+            
+            // Tìm command tương ứng
+            struct ir_command *cmd = find_ir_command(rule->cmd_id);
+            if (cmd == NULL) {
+                LOG_WRN("Rule %d: Command ID %u not found", i, rule->cmd_id);
+                continue;
+            }
+            
+            if (cmd->data_len == 0) {
+                LOG_WRN("Rule %d: Command ID %u is empty", i, rule->cmd_id);
+                continue;
+            }
+            
+            LOG_INF("❄️ Auto Rule %d matched:", i);
+            LOG_INF("   Temp %d.%02d°C in range [%d.%02d, %d.%02d)", 
+                    temp_external / 100, abs(temp_external % 100),
+                    rule->temp_min / 100, abs(rule->temp_min % 100),
+                    rule->temp_max / 100, abs(rule->temp_max % 100));
+            LOG_INF("   Sending Command %u: %s", cmd->cmd_id, cmd->description);
+            
+            // Gửi IR command
+            int ret = ir_send_raw_data(cmd->data, cmd->data_len);
+            
+            if (ret == 0) {
+                rule->last_sent_time = now;
+                ir_auto_state.last_matched_rule = i;
+                LOG_INF("✅ Auto IR sent successfully");
+                
+                // Chỉ gửi 1 rule đầu tiên match, break
+                break;
+            } else {
+                LOG_ERR("❌ Auto IR failed: %d", ret);
+            }
+        }
+    }
+}
+
+// Generate 38kHz carrier for specified duration (microseconds)
+static void ir_carrier_on(uint32_t duration_us) {
+    if (!device_is_ready(gpio_dev)) return;
+    
+    // Toggle GPIO at 38kHz for duration
+    uint32_t cycles = (duration_us * 38) / 1000;  // ~38 cycles per ms
+    
+    for (uint32_t i = 0; i < cycles; i++) {
+        gpio_pin_set(gpio_dev, IR_LED_PIN, 1);
+        k_busy_wait(13);  // ~13us HIGH for 38kHz
+        gpio_pin_set(gpio_dev, IR_LED_PIN, 0);
+        k_busy_wait(13);  // ~13us LOW
+    }
+}
+
+// No carrier (space)
+static void ir_carrier_off(uint32_t duration_us) {
+    if (!device_is_ready(gpio_dev)) return;
+    
+    gpio_pin_set(gpio_dev, IR_LED_PIN, 0);
+    k_busy_wait(duration_us);
+}
+
+// Send one bit via IR
+static void ir_send_bit(uint8_t bit) {
+    ir_carrier_on(IR_MARK_TIME);
+    
+    if (bit) {
+        ir_carrier_off(IR_ONE_SPACE);  // Bit 1: longer space
+    } else {
+        ir_carrier_off(IR_SPACE_TIME);  // Bit 0: shorter space
+    }
+}
+
+// Send raw IR data (MSB first)
+static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes) {
+    if (len_bytes == 0 || len_bytes > MAX_IR_DATA_LEN) {
+        LOG_ERR("Invalid IR data length: %d", len_bytes);
+        return -EINVAL;
+    }
+    
+    k_mutex_lock(&ir_mutex, K_FOREVER);
+    
+    if (ir_data.is_transmitting) {
+        LOG_WRN("IR transmission already in progress");
+        k_mutex_unlock(&ir_mutex);
+        return -EBUSY;
+    }
+    
+    ir_data.is_transmitting = true;
+    ir_status.bits_sent = 0;
+    
+    LOG_INF("📡 Sending IR data: %d bytes", len_bytes);
+    
+    // Send each byte (MSB first)
+    for (uint16_t i = 0; i < len_bytes; i++) {
+        uint8_t byte = data[i];
+        
+        // Send 8 bits (MSB first)
+        for (int bit = 7; bit >= 0; bit--) {
+            ir_send_bit((byte >> bit) & 0x01);
+            ir_status.bits_sent++;
+        }
+    }
+    
+    // Final mark
+    ir_carrier_on(IR_MARK_TIME);
+    ir_carrier_off(1000);  // 1ms trailing space
+    
+    ir_data.is_transmitting = false;
+    ir_status.last_result = 0;  // Success
+    
+    LOG_INF("✅ IR transmission complete: %d bits sent", ir_status.bits_sent);
+    
+    k_mutex_unlock(&ir_mutex);
+    
+    return 0;
+}
+
+// ============================================================================
+// BLE HANDLERS FOR IR RAW DATA
+// ============================================================================
+
+static ssize_t read_ir_status(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                               void *buf, uint16_t len, uint16_t offset) {
+    uint8_t data[4] = {
+        ir_status.last_result,
+        (ir_status.bits_sent >> 8) & 0xFF,
+        ir_status.bits_sent & 0xFF,
+        ir_data.is_transmitting ? 0x01 : 0x00
+    };
+    
+    LOG_DBG("Read IR status: result=%d, bits=%d, busy=%d",
+            data[0], ir_status.bits_sent, data[3]);
+    
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, data, sizeof(data));
+}
+
+static ssize_t write_ir_raw_data(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                  const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    if (len < 1 || len > MAX_IR_DATA_LEN) {
+        LOG_ERR("Invalid IR data length: %d", len);
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+
+    k_mutex_lock(&ir_mutex, K_FOREVER);
+    
+    if (ir_data.is_transmitting) {
+        LOG_WRN("IR busy - rejecting new data");
+        k_mutex_unlock(&ir_mutex);
+        return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+    }
+    
+    // Copy data from app
+    memcpy(ir_data.data, buf, len);
+    ir_data.data_len = len;
+    
+    k_mutex_unlock(&ir_mutex);
+    
+    LOG_INF("📥 Received IR data from app: %d bytes", len);
+    
+    // Log first few bytes for debugging
+    if (len >= 4) {
+        LOG_INF("   First bytes: 0x%02X 0x%02X 0x%02X 0x%02X",
+                ir_data.data[0], ir_data.data[1], ir_data.data[2], ir_data.data[3]);
+    }
+    
+    // Transmit immediately
+    int ret = ir_send_raw_data(ir_data.data, ir_data.data_len);
+    
+    if (ret < 0) {
+        ir_status.last_result = 1;  // Error
+        LOG_ERR("IR transmission failed: %d", ret);
+    } else {
+        ir_status.last_result = 0;  // Success
+    }
+    
+    // Notify status update
+    uint8_t status_data[4] = {
+        ir_status.last_result,
+        (ir_status.bits_sent >> 8) & 0xFF,
+        ir_status.bits_sent & 0xFF,
+        0x00
+    };
+    
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            bt_gatt_notify(active_conns[i], attr, status_data, sizeof(status_data));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    return len;
+}
+
+// ============================================================================
+// BLE HANDLERS FOR IR COMMAND DATABASE
+// ============================================================================
+
+static ssize_t read_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                               void *buf, uint16_t len, uint16_t offset) {
+    // Format: [cmd_count][cmd1_metadata][cmd2_metadata]...
+    // Metadata: [cmd_id_h][cmd_id_l][data_len_h][data_len_l][description_len][description]
+    
+    uint8_t response[512];
+    uint16_t pos = 0;
+    
+    response[pos++] = ir_cmd_count;
+    
+    for (int i = 0; i < ir_cmd_count && i < MAX_IR_COMMANDS; i++) {
+        struct ir_command *cmd = &ir_commands[i];
+        
+        response[pos++] = (cmd->cmd_id >> 8) & 0xFF;
+        response[pos++] = cmd->cmd_id & 0xFF;
+        response[pos++] = (cmd->data_len >> 8) & 0xFF;
+        response[pos++] = cmd->data_len & 0xFF;
+        
+        uint8_t desc_len = strlen(cmd->description);
+        response[pos++] = desc_len;
+        memcpy(&response[pos], cmd->description, desc_len);
+        pos += desc_len;
+        
+        if (pos > 400) break;  // Avoid overflow
+    }
+    
+    LOG_INF("📖 Read IR command DB: %d commands", ir_cmd_count);
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, response, pos);
+}
+
+static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    // Format: [operation][cmd_id_h][cmd_id_l][data...]
+    // Operation: 0x01=Add/Update, 0x02=Delete
+    
+    if (len < 3) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+
+    const uint8_t *data = (const uint8_t *)buf;
+    uint8_t operation = data[0];
+    uint16_t cmd_id = (data[1] << 8) | data[2];
+    
+    k_mutex_lock(&ir_mutex, K_FOREVER);
+    
+    if (operation == 0x01) {  // Add/Update command
+        // Format: [0x01][cmd_id_h][cmd_id_l][data_len_h][data_len_l][desc_len][description][ir_data...]
+        
+        if (len < 6) {
+            k_mutex_unlock(&ir_mutex);
+            return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+        }
+        
+        uint16_t data_len = (data[3] << 8) | data[4];
+        uint8_t desc_len = data[5];
+        
+        if (data_len > MAX_IR_DATA_LEN || (6 + desc_len + data_len) > len) {
+            k_mutex_unlock(&ir_mutex);
+            return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+        }
+        
+        // Tìm hoặc tạo mới command
+        struct ir_command *cmd = find_ir_command(cmd_id);
+        
+        if (cmd == NULL) {
+            // Tạo mới
+            if (ir_cmd_count >= MAX_IR_COMMANDS) {
+                k_mutex_unlock(&ir_mutex);
+                LOG_ERR("IR command DB full");
+                return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
+            }
+            
+            cmd = &ir_commands[ir_cmd_count];
+            ir_cmd_count++;
+        }
+        
+        // Update command
+        cmd->cmd_id = cmd_id;
+        cmd->data_len = data_len;
+        memcpy(cmd->description, &data[6], desc_len);
+        cmd->description[desc_len] = '\0';
+        memcpy(cmd->data, &data[6 + desc_len], data_len);
+        
+        LOG_INF("💾 IR Command %u: '%s' (%d bytes)", 
+                cmd_id, cmd->description, data_len);
+        
+        // Save to NVS
+        save_ir_commands();
+        
+    } else if (operation == 0x02) {  // Delete command
+        
+        struct ir_command *cmd = find_ir_command(cmd_id);
+        if (cmd == NULL) {
+            k_mutex_unlock(&ir_mutex);
+            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+        }
+        
+        // Shift array to remove
+        int index = cmd - ir_commands;
+        for (int i = index; i < ir_cmd_count - 1; i++) {
+            memcpy(&ir_commands[i], &ir_commands[i + 1], sizeof(struct ir_command));
+        }
+        ir_cmd_count--;
+        
+        LOG_INF("🗑️  Deleted IR Command %u", cmd_id);
+        
+        // Save to NVS
+        save_ir_commands();
+    }
+    
+    k_mutex_unlock(&ir_mutex);
+    
+    // Notify
+    uint8_t notify_data[3] = { operation, (cmd_id >> 8) & 0xFF, cmd_id & 0xFF };
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            bt_gatt_notify(active_conns[i], attr, notify_data, sizeof(notify_data));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    return len;
+}
+
+// ============================================================================
+// BLE HANDLERS FOR AUTO RULES
+// ============================================================================
+
+static ssize_t read_ir_auto_rules(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                   void *buf, uint16_t len, uint16_t offset) {
+    // Format: [active_count][rule0_data][rule1_data]...
+    // Rule data: [rule_id][enabled][temp_min_h][temp_min_l][temp_max_h][temp_max_l]
+    //            [cmd_id_h][cmd_id_l][interval_ms_bytes_4]
+    
+    uint8_t response[512];
+    uint16_t pos = 0;
+    
+    uint8_t active_count = 0;
+    for (int i = 0; i < MAX_AUTO_RULES; i++) {
+        if (ir_auto_rules[i].enabled || ir_auto_rules[i].cmd_id != 0) {
+            active_count++;
+        }
+    }
+    
+    response[pos++] = active_count;
+    
+    for (int i = 0; i < MAX_AUTO_RULES; i++) {
+        struct ir_auto_rule *rule = &ir_auto_rules[i];
+        
+        if (!rule->enabled && rule->cmd_id == 0) continue;
+        
+        response[pos++] = rule->rule_id;
+        response[pos++] = rule->enabled ? 0x01 : 0x00;
+        response[pos++] = (rule->temp_min >> 8) & 0xFF;
+        response[pos++] = rule->temp_min & 0xFF;
+        response[pos++] = (rule->temp_max >> 8) & 0xFF;
+        response[pos++] = rule->temp_max & 0xFF;
+        response[pos++] = (rule->cmd_id >> 8) & 0xFF;
+        response[pos++] = rule->cmd_id & 0xFF;
+        
+        uint32_t interval = rule->min_interval_ms;
+        response[pos++] = (interval >> 24) & 0xFF;
+        response[pos++] = (interval >> 16) & 0xFF;
+        response[pos++] = (interval >> 8) & 0xFF;
+        response[pos++] = interval & 0xFF;
+        
+        if (pos > 400) break;
+    }
+    
+    LOG_INF("📖 Read auto rules: %d active", active_count);
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, response, pos);
+}
+
+static ssize_t write_ir_auto_rules(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                    const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    // Format: [operation][rule_id][data...]
+    // Operation: 0x01=Add/Update, 0x02=Delete, 0x03=Toggle Enable
+    
+    if (len < 2) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+
+    const uint8_t *data = (const uint8_t *)buf;
+    uint8_t operation = data[0];
+    uint8_t rule_id = data[1];
+    
+    if (rule_id >= MAX_AUTO_RULES) {
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    k_mutex_lock(&ir_mutex, K_FOREVER);
+    
+    struct ir_auto_rule *rule = &ir_auto_rules[rule_id];
+    
+    if (operation == 0x01) {  // Add/Update rule
+        // Format: [0x01][rule_id][enabled][temp_min_h][temp_min_l][temp_max_h][temp_max_l]
+        //         [cmd_id_h][cmd_id_l][interval_4bytes]
+        
+        if (len < 14) {
+            k_mutex_unlock(&ir_mutex);
+            return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+        }
+        
+        rule->rule_id = rule_id;
+        rule->enabled = (data[2] != 0);
+        rule->temp_min = (int16_t)((data[3] << 8) | data[4]);
+        rule->temp_max = (int16_t)((data[5] << 8) | data[6]);
+        rule->cmd_id = (data[7] << 8) | data[8];
+        rule->min_interval_ms = ((uint32_t)data[9] << 24) | 
+                               ((uint32_t)data[10] << 16) |
+                               ((uint32_t)data[11] << 8) | 
+                               data[12];
+        
+        // Reset last sent time
+        rule->last_sent_time = 0;
+        
+        // Update active count
+        ir_auto_state.active_rule_count = 0;
+        for (int i = 0; i < MAX_AUTO_RULES; i++) {
+            if (ir_auto_rules[i].enabled) {
+                ir_auto_state.active_rule_count++;
+            }
+        }
+        
+        LOG_INF("💾 Auto Rule %d: %s", rule_id, rule->enabled ? "ENABLED" : "DISABLED");
+        LOG_INF("   Temp range: [%d.%02d, %d.%02d) → Cmd %u",
+                rule->temp_min / 100, abs(rule->temp_min % 100),
+                rule->temp_max / 100, abs(rule->temp_max % 100),
+                rule->cmd_id);
+        LOG_INF("   Min interval: %u ms", rule->min_interval_ms);
+        
+    } else if (operation == 0x02) {  // Delete rule
+        
+        memset(rule, 0, sizeof(struct ir_auto_rule));
+        rule->rule_id = rule_id;
+        
+        // Update active count
+        ir_auto_state.active_rule_count = 0;
+        for (int i = 0; i < MAX_AUTO_RULES; i++) {
+            if (ir_auto_rules[i].enabled) {
+                ir_auto_state.active_rule_count++;
+            }
+        }
+        
+        LOG_INF("🗑️  Deleted Auto Rule %d", rule_id);
+        
+    } else if (operation == 0x03) {  // Toggle enable
+        
+        rule->enabled = !rule->enabled;
+        rule->last_sent_time = 0;  // Reset
+        
+        // Update active count
+        ir_auto_state.active_rule_count = 0;
+        for (int i = 0; i < MAX_AUTO_RULES; i++) {
+            if (ir_auto_rules[i].enabled) {
+                ir_auto_state.active_rule_count++;
+            }
+        }
+        
+        LOG_INF("🔄 Rule %d: %s", rule_id, rule->enabled ? "ENABLED" : "DISABLED");
+    }
+    
+    // Save to NVS
+    save_ir_auto_rules();
+    
+    k_mutex_unlock(&ir_mutex);
+    
+    // Notify
+    uint8_t notify_data[3] = { operation, rule_id, rule->enabled ? 0x01 : 0x00 };
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            bt_gatt_notify(active_conns[i], attr, notify_data, sizeof(notify_data));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    return len;
+}
+
+// ============================================================================
+// BLE HANDLERS FOR GLOBAL AUTO ENABLE
+// ============================================================================
+
+static ssize_t read_ir_auto_enable(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                    void *buf, uint16_t len, uint16_t offset) {
+    uint8_t data[3] = {
+        ir_auto_state.global_enabled ? 0x01 : 0x00,
+        ir_auto_state.active_rule_count,
+        ir_auto_state.last_matched_rule
+    };
+    
+    LOG_INF("📖 Auto Control: %s (%d active rules)", 
+            ir_auto_state.global_enabled ? "ENABLED" : "DISABLED",
+            ir_auto_state.active_rule_count);
+    
+    return bt_gatt_attr_read(conn, attr, buf, len, offset, data, sizeof(data));
+}
+
+static ssize_t write_ir_auto_enable(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                     const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    if (len < 1) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+
+    const uint8_t *data = (const uint8_t *)buf;
+    bool enabled = (data[0] != 0);
+    
+    k_mutex_lock(&ir_mutex, K_FOREVER);
+    
+    bool was_enabled = ir_auto_state.global_enabled;
+    ir_auto_state.global_enabled = enabled;
+    
+    // Reset last matched rule
+    if (enabled && !was_enabled) {
+        ir_auto_state.last_matched_rule = 0xFF;
+        
+        // Reset all rule timers
+        for (int i = 0; i < MAX_AUTO_RULES; i++) {
+            ir_auto_rules[i].last_sent_time = 0;
+        }
+    }
+    
+    k_mutex_unlock(&ir_mutex);
+    
+    // Log status change
+    if (was_enabled && !enabled) {
+        LOG_WRN("❄️ Global Auto Control: DISABLED ⛔");
+    } else if (!was_enabled && enabled) {
+        LOG_WRN("❄️ Global Auto Control: ENABLED ✅");
+        LOG_WRN("   Active rules: %d", ir_auto_state.active_rule_count);
+    }
+    
+    // Save to NVS
+    save_ir_auto_state();
+    
+    // Notify
+    uint8_t notify_data[3] = {
+        ir_auto_state.global_enabled ? 0x01 : 0x00,
+        ir_auto_state.active_rule_count,
+        ir_auto_state.last_matched_rule
+    };
+    
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            bt_gatt_notify(active_conns[i], attr, notify_data, sizeof(notify_data));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    return len;
+}
+
+// ============================================================================
+// SETTINGS STORAGE - NVS
+// ============================================================================
+
+// Thêm vào hàm settings_set_all(), sau phần temperature settings:
+/*
+    // IR commands database
+    if (settings_name_steq(name, "ir_cmds", &next) && !next) {
+        if (len > sizeof(ir_commands)) return -EINVAL;
+        
+        if (read_cb(cb_arg, ir_commands, len) != len) {
+            return -EINVAL;
+        }
+        
+        ir_cmd_count = len / sizeof(struct ir_command);
+        LOG_DBG("Loaded %d IR commands from NVS", ir_cmd_count);
+        return 0;
+    }
+    
+    // IR auto rules
+    if (settings_name_steq(name, "ir_rules", &next) && !next) {
+        if (len != sizeof(ir_auto_rules)) return -EINVAL;
+        
+        if (read_cb(cb_arg, ir_auto_rules, sizeof(ir_auto_rules)) != sizeof(ir_auto_rules)) {
+            return -EINVAL;
+        }
+        
+        LOG_DBG("Loaded IR auto rules from NVS");
+        return 0;
+    }
+    
+    // IR auto state
+    if (settings_name_steq(name, "ir_state", &next) && !next) {
+        if (len != sizeof(ir_auto_state)) return -EINVAL;
+        
+        if (read_cb(cb_arg, &ir_auto_state, sizeof(ir_auto_state)) != sizeof(ir_auto_state)) {
+            return -EINVAL;
+        }
+        
+        LOG_DBG("Loaded IR auto state from NVS");
+        return 0;
+    }
+*/
+
+static int save_ir_commands(void) {
+    size_t data_len = ir_cmd_count * sizeof(struct ir_command);
+    
+    int rc = settings_save_one(SETTINGS_NAME "/ir_cmds", ir_commands, data_len);
+    if (rc) {
+        LOG_ERR("Failed to save IR commands: %d", rc);
+        return rc;
+    }
+    
+    LOG_INF("💾 Saved %d IR commands to NVS", ir_cmd_count);
+    return 0;
+}
+
+static int save_ir_auto_rules(void) {
+    int rc = settings_save_one(SETTINGS_NAME "/ir_rules", ir_auto_rules, sizeof(ir_auto_rules));
+    if (rc) {
+        LOG_ERR("Failed to save IR auto rules: %d", rc);
+        return rc;
+    }
+    
+    LOG_INF("💾 Saved IR auto rules to NVS");
+    return 0;
+}
+
+static int save_ir_auto_state(void) {
+    int rc = settings_save_one(SETTINGS_NAME "/ir_state", &ir_auto_state, sizeof(ir_auto_state));
+    if (rc) {
+        LOG_ERR("Failed to save IR auto state: %d", rc);
+        return rc;
+    }
+    
+    LOG_INF("💾 Saved IR auto state to NVS");
+    return 0;
+}
+
+
+
+
+
+
+ 
 #include <zephyr/device.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
@@ -1098,6 +1911,10 @@ static void update_all_sensors(void) {
     
     // Check temperature protection
     check_temp_protection();
+
+
+    // Check IR auto control based on temperature
+    check_ir_auto_control();
     
     // Notify custom characteristics
     k_mutex_lock(&conn_mutex, K_FOREVER);
@@ -1703,6 +2520,41 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
                           BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
                           read_bond_management, write_bond_management, NULL),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+
+
+     // IR Raw Data - Gửi instant IR command
+    BT_GATT_CHARACTERISTIC(BT_UUID_IR_RAW_DATA,
+                          BT_GATT_CHRC_WRITE | BT_GATT_CHRC_WRITE_WITHOUT_RESP,
+                          BT_GATT_PERM_WRITE,
+                          NULL, write_ir_raw_data, NULL),
+    
+    // IR Status - Đọc trạng thái transmission
+    BT_GATT_CHARACTERISTIC(BT_UUID_IR_STATUS,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ,
+                          read_ir_status, NULL, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    
+    // IR Command Database - CRUD operations cho IR codes
+    BT_GATT_CHARACTERISTIC(BT_UUID_IR_CMD_DB,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                          read_ir_cmd_db, write_ir_cmd_db, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    
+    // IR Auto Rules - CRUD operations cho rules
+    BT_GATT_CHARACTERISTIC(BT_UUID_IR_AUTO_RULES,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                          read_ir_auto_rules, write_ir_auto_rules, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+    
+    // IR Auto Enable - Bật/tắt global auto control
+    BT_GATT_CHARACTERISTIC(BT_UUID_IR_AUTO_ENABLE,
+                          BT_GATT_CHRC_READ | BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
+                          read_ir_auto_enable, write_ir_auto_enable, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 );
 
 
@@ -1951,8 +2803,14 @@ static int battery_monitor_init(void) {
     }
 
  
+    // Configure IR LED
+    ret = gpio_pin_configure(gpio_dev, IR_LED_PIN, GPIO_OUTPUT_INACTIVE);
+    if (ret < 0) {
+        LOG_ERR("Failed to configure IR LED: %d", ret);
+        return ret;
+    }
+    LOG_INF("IR LED configured on P0.%d", IR_LED_PIN);
     
-
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     LOG_INF("📡 CONNECTION MANAGEMENT:");
     LOG_INF("  Max connections: %d", MAX_CONNECTIONS);
