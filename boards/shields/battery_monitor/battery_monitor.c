@@ -6,7 +6,74 @@
  * Settings storage: Uses Zephyr Settings API directly (ZMK core already enables NVS)
  * No need to add CONFIG_SETTINGS or CONFIG_NVS - already in ZMK core!
  */
+#include <zephyr/device.h>
+#include <zephyr/init.h>
+#include <zephyr/kernel.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/adc.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/sys/reboot.h>
+#include <zephyr/settings/settings.h>
+#include <stdlib.h>
+#include <math.h>
 
+#include <zmk/battery.h>
+#include <zmk/ble.h>
+#include <zmk/events/battery_state_changed.h>
+#include <zmk/events/position_state_changed.h>
+#include <zmk/event_manager.h>
+#include <hal/nrf_power.h>
+
+LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+#define MOSFET_PIN  24
+
+// NTC
+#define NTC_REFERENCE_MV      3300
+#define NTC_SERIES_RESISTOR   26620
+#define NTC_NOMINAL_RESISTANCE 40700
+#define NTC_NOMINAL_TEMP      29.5
+#define NTC_B_COEFFICIENT     3950
+
+// Defaults - Battery
+#define DEFAULT_AUTO_ON_ENABLE    true
+#define DEFAULT_AUTO_OFF_ENABLE   true
+#define DEFAULT_AUTO_ON_PERCENT   30
+#define DEFAULT_AUTO_OFF_PERCENT  80
+#define DEFAULT_STORAGE_PERCENT   40
+#define DEFAULT_REVERSE_OFF_ENABLE false
+#define DEFAULT_REVERSE_OFF_PERCENT 25
+#define DEFAULT_REVERSE_ON_ENABLE  false
+#define DEFAULT_REVERSE_ON_PERCENT 60
+
+// Defaults - Temperature (in hundredths of degree Celsius)
+#define DEFAULT_TEMP_INT_HIGH_ENABLE   false
+#define DEFAULT_TEMP_INT_HIGH_THRESHOLD 5000   // 50.00°C
+#define DEFAULT_TEMP_INT_LOW_ENABLE    false
+#define DEFAULT_TEMP_INT_LOW_THRESHOLD 1000    // 10.00°C
+#define DEFAULT_TEMP_EXT_HIGH_ENABLE   false
+#define DEFAULT_TEMP_EXT_HIGH_THRESHOLD 6000   // 60.00°C
+#define DEFAULT_TEMP_EXT_LOW_ENABLE    false
+#define DEFAULT_TEMP_EXT_LOW_THRESHOLD 500     // 5.00°C
+
+#define UPDATE_INTERVAL_MS      10000
+#define AUTO_UPDATE_DURATION_MS 1800000
+
+// Settings key (stored as "btmon/cfg" in NVS)
+#define SETTINGS_NAME "btmon"
+
+
+// Connection management
+#define MAX_CONNECTIONS 4
+#define BOND_ALIAS_MAX_LEN 32
 
 
 // ============================================================================
@@ -820,74 +887,7 @@ static int save_ir_auto_state(void) {
 
 
  
-#include <zephyr/device.h>
-#include <zephyr/init.h>
-#include <zephyr/kernel.h>
-#include <zephyr/drivers/gpio.h>
-#include <zephyr/drivers/sensor.h>
-#include <zephyr/drivers/adc.h>
-#include <zephyr/logging/log.h>
-#include <zephyr/bluetooth/bluetooth.h>
-#include <zephyr/bluetooth/gatt.h>
-#include <zephyr/bluetooth/uuid.h>
-#include <zephyr/sys/reboot.h>
-#include <zephyr/settings/settings.h>
-#include <stdlib.h>
-#include <math.h>
 
-#include <zmk/battery.h>
-#include <zmk/ble.h>
-#include <zmk/events/battery_state_changed.h>
-#include <zmk/events/position_state_changed.h>
-#include <zmk/event_manager.h>
-#include <hal/nrf_power.h>
-
-LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
-
-// ============================================================================
-// Configuration
-// ============================================================================
-
-#define MOSFET_PIN  24
-
-// NTC
-#define NTC_REFERENCE_MV      3300
-#define NTC_SERIES_RESISTOR   26620
-#define NTC_NOMINAL_RESISTANCE 40700
-#define NTC_NOMINAL_TEMP      29.5
-#define NTC_B_COEFFICIENT     3950
-
-// Defaults - Battery
-#define DEFAULT_AUTO_ON_ENABLE    true
-#define DEFAULT_AUTO_OFF_ENABLE   true
-#define DEFAULT_AUTO_ON_PERCENT   30
-#define DEFAULT_AUTO_OFF_PERCENT  80
-#define DEFAULT_STORAGE_PERCENT   40
-#define DEFAULT_REVERSE_OFF_ENABLE false
-#define DEFAULT_REVERSE_OFF_PERCENT 25
-#define DEFAULT_REVERSE_ON_ENABLE  false
-#define DEFAULT_REVERSE_ON_PERCENT 60
-
-// Defaults - Temperature (in hundredths of degree Celsius)
-#define DEFAULT_TEMP_INT_HIGH_ENABLE   false
-#define DEFAULT_TEMP_INT_HIGH_THRESHOLD 5000   // 50.00°C
-#define DEFAULT_TEMP_INT_LOW_ENABLE    false
-#define DEFAULT_TEMP_INT_LOW_THRESHOLD 1000    // 10.00°C
-#define DEFAULT_TEMP_EXT_HIGH_ENABLE   false
-#define DEFAULT_TEMP_EXT_HIGH_THRESHOLD 6000   // 60.00°C
-#define DEFAULT_TEMP_EXT_LOW_ENABLE    false
-#define DEFAULT_TEMP_EXT_LOW_THRESHOLD 500     // 5.00°C
-
-#define UPDATE_INTERVAL_MS      10000
-#define AUTO_UPDATE_DURATION_MS 1800000
-
-// Settings key (stored as "btmon/cfg" in NVS)
-#define SETTINGS_NAME "btmon"
-
-
-// Connection management
-#define MAX_CONNECTIONS 4
-#define BOND_ALIAS_MAX_LEN 32
 
 // ============================================================================
 // BLE UUIDs
