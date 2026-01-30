@@ -413,6 +413,32 @@ typedef enum {
 #define MITSUBISHI_E_ZERO_SPACE     420
 
 
+// IR Receiver data structure
+struct ir_pulse {
+    uint32_t duration_us;
+    bool is_mark;  // true = mark (carrier on), false = space
+};
+
+// Thay đổi structure để dùng k_cycle_get_32() cho độ chính xác cao
+static struct ir_rx_data {
+    struct ir_pulse pulses[IR_MAX_PULSES];
+    uint16_t pulse_count;
+    bool is_receiving;
+    uint32_t last_edge_cycles;  // ⭐ Dùng cycles thay vì time
+} ir_rx = {
+    .pulse_count = 0,
+    .is_receiving = false
+};
+
+static struct gpio_callback ir_rx_cb_data;
+static K_MUTEX_DEFINE(ir_rx_mutex);
+
+
+// Max IR data length (support up to 1024 bits = 128 bytes)
+#define MAX_IR_DATA_LEN 128
+
+// Auto control rules
+#define MAX_AUTO_RULES 50  // Tối đa 50 rules
 
 
 // IR decoded data
@@ -745,32 +771,6 @@ static bool try_decode_mitsubishi_electric_ac(struct ir_decoded_data *out) {
 }
 
 
-// IR Receiver data structure
-struct ir_pulse {
-    uint32_t duration_us;
-    bool is_mark;  // true = mark (carrier on), false = space
-};
-
-// Thay đổi structure để dùng k_cycle_get_32() cho độ chính xác cao
-static struct ir_rx_data {
-    struct ir_pulse pulses[IR_MAX_PULSES];
-    uint16_t pulse_count;
-    bool is_receiving;
-    uint32_t last_edge_cycles;  // ⭐ Dùng cycles thay vì time
-} ir_rx = {
-    .pulse_count = 0,
-    .is_receiving = false
-};
-
-static struct gpio_callback ir_rx_cb_data;
-static K_MUTEX_DEFINE(ir_rx_mutex);
-
-
-// Max IR data length (support up to 1024 bits = 128 bytes)
-#define MAX_IR_DATA_LEN 128
-
-// Auto control rules
-#define MAX_AUTO_RULES 50  // Tối đa 50 rules
 
 // ============================================================================
 // THÊM UUID CHO AC CONTROL (sau các UUID hiện tại)
