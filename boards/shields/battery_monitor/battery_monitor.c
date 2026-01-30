@@ -311,6 +311,7 @@ static void switch_to_next_available_profile(void);
 static uint8_t voltage_to_percent(uint16_t voltage_mv);
 static void start_auto_updates(void);
 
+static int ir_send_command(ir_protocol_t protocol, const uint8_t *data, uint8_t bits);
 // ============================================================================
 // IR TRANSMISSION FUNCTIONS
 // ============================================================================// ============================================================================
@@ -1562,26 +1563,24 @@ static ssize_t write_ir_learning(struct bt_conn *conn, const struct bt_gatt_attr
 }
 
 // Handler: App gửi IR code trực tiếp (không học từ remote)
+// Handler: App gửi IR code (hỗ trợ cả decoded và raw)
 static ssize_t write_ir_from_app(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                   const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
-    // Format: [cmd_id_h][cmd_id_l][desc_len][description][data...]
-    if (len < 4) {
+    // Format: [cmd_id_h][cmd_id_l][protocol][desc_len][description][data...]
+    if (len < 5) {
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
     }
 
     const uint8_t *data = (const uint8_t *)buf;
     uint16_t cmd_id = (data[0] << 8) | data[1];
-    uint8_t desc_len = data[2];
+    uint8_t protocol = data[2];
+    uint8_t desc_len = data[3];
     
-    if ((3 + desc_len) >= len) {
+    if ((4 + desc_len) >= len) {
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
     }
     
-    uint16_t ir_data_len = len - 3 - desc_len;
-    
-    if (ir_data_len > MAX_IR_DATA_LEN) {
-        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
-    }
+    uint16_t ir_data_len = len - 4 - desc_len;
     
     k_mutex_lock(&ir_mutex, K_FOREVER);
     
@@ -1596,17 +1595,47 @@ static ssize_t write_ir_from_app(struct bt_conn *conn, const struct bt_gatt_attr
     }
     
     cmd->cmd_id = cmd_id;
-    cmd->data_len = ir_data_len;
-    memcpy(cmd->description, &data[3], desc_len);
+    cmd->protocol = (ir_protocol_t)protocol;
+    memcpy(cmd->description, &data[4], desc_len);
     cmd->description[desc_len] = '\0';
-    memcpy(cmd->data, &data[3 + desc_len], ir_data_len);
+    
+    const uint8_t *ir_data = &data[4 + desc_len];
+    
+    if (cmd->protocol == IR_PROTOCOL_RAW) {
+        // ⭐ RAW pulses (compressed format)
+        cmd->raw.pulse_count = ir_data_len / 2;
+        
+        if (cmd->raw.pulse_count > 512) {
+            LOG_ERR("Too many pulses: %d", cmd->raw.pulse_count);
+            k_mutex_unlock(&ir_mutex);
+            return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+        }
+        
+        for (int i = 0; i < cmd->raw.pulse_count; i++) {
+            cmd->raw.pulses[i].data = (ir_data[i * 2] << 8) | ir_data[i * 2 + 1];
+        }
+        
+        LOG_INF("📲 RAW IR from app: Command %u '%s' (%d pulses)", 
+                cmd_id, cmd->description, cmd->raw.pulse_count);
+        
+    } else {
+        // ⭐ Decoded protocol data
+        if (ir_data_len > sizeof(struct ir_decoded_data)) {
+            LOG_ERR("Decoded data too large: %d", ir_data_len);
+            k_mutex_unlock(&ir_mutex);
+            return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+        }
+        
+        memcpy(&cmd->decoded, ir_data, ir_data_len);
+        cmd->decoded.protocol = cmd->protocol;
+        
+        LOG_INF("📲 Decoded IR from app: Command %u '%s' (protocol %d, %d bits)", 
+                cmd_id, cmd->description, cmd->protocol, cmd->decoded.bits);
+    }
     
     save_ir_commands();
     
     k_mutex_unlock(&ir_mutex);
-    
-    LOG_INF("📲 IR from app saved: Command %u '%s' (%d bytes)", 
-            cmd_id, cmd->description, ir_data_len);
     
     return len;
 }
