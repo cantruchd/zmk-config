@@ -40,13 +40,25 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // IR TRANSMISSION - PWM-BASED (near top, after includes)
 // ============================================================================
 
-// PWM device spec from devicetree
-static const struct pwm_dt_spec ir_pwm = PWM_DT_SPEC_GET(DT_ALIAS(ir_pwm));
+// ============================================================================
+// IR TRANSMISSION - PWM-BASED (near top, after includes)
+// ============================================================================
+
+// ⭐ THAY ĐỔI: Dùng DT_NODELABEL thay vì DT_ALIAS
+#if DT_NODE_HAS_STATUS(DT_NODELABEL(pwm0), okay)
+    static const struct pwm_dt_spec ir_pwm = {
+        .dev = DEVICE_DT_GET(DT_NODELABEL(pwm0)),
+        .channel = 0,
+        .period = IR_CARRIER_PERIOD_NS,
+        .flags = 0
+    };
+#else
+    #error "PWM0 not enabled in devicetree"
+#endif
 
 // 38kHz carrier: period = 26.316us, duty = 50% (13.158us)
 #define IR_CARRIER_PERIOD_NS    26316  // 1/38000 * 1e9
 #define IR_CARRIER_PULSE_NS     13158  // 50% duty cycle
-
 
 // ============================================================================
 // Configuration
