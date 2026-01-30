@@ -34,6 +34,48 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // Configuration
 // ============================================================================
 
+
+
+// IR Configuration
+#define IR_TX_PIN   20  // P0.20 (D3) - IR LED
+#define IR_RX_PIN   11  // P0.11 (D7) - IR Receiver
+#define IR_CARRIER_FREQ 38000  // 38kHz carrier
+
+// IR Timing (microseconds) - NEC Protocol
+#define IR_MARK_TIME   560   // Mark pulse
+#define IR_SPACE_TIME  560   // Space for bit 0
+#define IR_ONE_SPACE   1690  // Space for bit 1
+#define IR_HEADER_MARK 9000  // Header mark
+#define IR_HEADER_SPACE 4500 // Header space
+
+// IR RX Configuration
+#define IR_RX_TIMEOUT_US  100000  // 100ms timeout
+#define IR_MAX_PULSES     256     // Max pulses to capture
+#define IR_TOLERANCE_US   200     // ±200us tolerance
+
+
+// IR Receiver data structure
+struct ir_pulse {
+    uint32_t duration_us;
+    bool is_mark;  // true = mark (carrier on), false = space
+};
+
+struct ir_rx_data {
+    struct ir_pulse pulses[IR_MAX_PULSES];
+    uint16_t pulse_count;
+    bool is_receiving;
+    int64_t last_edge_time;
+};
+
+static struct ir_rx_data ir_rx = {
+    .pulse_count = 0,
+    .is_receiving = false
+};
+
+static struct gpio_callback ir_rx_cb_data;
+static K_MUTEX_DEFINE(ir_rx_mutex);
+
+
 #define MOSFET_PIN  24
 
 // NTC
@@ -317,15 +359,45 @@ static void start_auto_updates(void);
 // ============================================================================
 
 #include <zephyr/drivers/pwm.h>
+// IR Configuration
+#define IR_TX_PIN   20  // P0.20 (D3) - IR LED
+#define IR_RX_PIN   11  // P0.11 (D7) - IR Receiver
+#define IR_CARRIER_FREQ 38000  // 38kHz carrier
 
-// IR LED Configuration
-#define IR_LED_PIN 25  // Chọn GPIO pin cho IR LED
-#define IR_CARRIER_FREQ 38000  // 38kHz carrier frequency
+// IR Timing (microseconds) - NEC Protocol
+#define IR_MARK_TIME   560   // Mark pulse
+#define IR_SPACE_TIME  560   // Space for bit 0
+#define IR_ONE_SPACE   1690  // Space for bit 1
+#define IR_HEADER_MARK 9000  // Header mark
+#define IR_HEADER_SPACE 4500 // Header space
 
-// IR Timing (microseconds)
-#define IR_MARK_TIME  560   // Standard mark time
-#define IR_SPACE_TIME 560   // Space time for bit 0
-#define IR_ONE_SPACE  1690  // Space time for bit 1
+// IR RX Configuration
+#define IR_RX_TIMEOUT_US  100000  // 100ms timeout
+#define IR_MAX_PULSES     256     // Max pulses to capture
+#define IR_TOLERANCE_US   200     // ±200us tolerance
+
+
+// IR Receiver data structure
+struct ir_pulse {
+    uint32_t duration_us;
+    bool is_mark;  // true = mark (carrier on), false = space
+};
+
+struct ir_rx_data {
+    struct ir_pulse pulses[IR_MAX_PULSES];
+    uint16_t pulse_count;
+    bool is_receiving;
+    int64_t last_edge_time;
+};
+
+static struct ir_rx_data ir_rx = {
+    .pulse_count = 0,
+    .is_receiving = false
+};
+
+static struct gpio_callback ir_rx_cb_data;
+static K_MUTEX_DEFINE(ir_rx_mutex);
+
 
 // Max IR data length (support up to 1024 bits = 128 bytes)
 #define MAX_IR_DATA_LEN 128
@@ -533,41 +605,45 @@ static void check_ir_auto_control(void) {
     }
 }
 
-// Generate 38kHz carrier for specified duration (microseconds)
+// Generate 38kHz carrier (bit-banging)
 static void ir_carrier_on(uint32_t duration_us) {
     if (!device_is_ready(gpio_dev)) return;
     
-    // Toggle GPIO at 38kHz for duration
-    uint32_t cycles = (duration_us * 38) / 1000;  // ~38 cycles per ms
+    // 38kHz = 26.3us period (13us HIGH + 13us LOW)
+    uint32_t cycles = (duration_us * 38) / 1000;
     
     for (uint32_t i = 0; i < cycles; i++) {
-        gpio_pin_set(gpio_dev, IR_LED_PIN, 1);
-        k_busy_wait(13);  // ~13us HIGH for 38kHz
-        gpio_pin_set(gpio_dev, IR_LED_PIN, 0);
-        k_busy_wait(13);  // ~13us LOW
+        gpio_pin_set(gpio_dev, IR_TX_PIN, 1);
+        k_busy_wait(13);  // 13us HIGH
+        gpio_pin_set(gpio_dev, IR_TX_PIN, 0);
+        k_busy_wait(13);  // 13us LOW
     }
 }
 
 // No carrier (space)
 static void ir_carrier_off(uint32_t duration_us) {
     if (!device_is_ready(gpio_dev)) return;
-    
-    gpio_pin_set(gpio_dev, IR_LED_PIN, 0);
+    gpio_pin_set(gpio_dev, IR_TX_PIN, 0);
     k_busy_wait(duration_us);
 }
 
-// Send one bit via IR
+// Send NEC header
+static void ir_send_header(void) {
+    ir_carrier_on(IR_HEADER_MARK);
+    ir_carrier_off(IR_HEADER_SPACE);
+}
+
+// Send one bit
 static void ir_send_bit(uint8_t bit) {
     ir_carrier_on(IR_MARK_TIME);
-    
     if (bit) {
-        ir_carrier_off(IR_ONE_SPACE);  // Bit 1: longer space
+        ir_carrier_off(IR_ONE_SPACE);
     } else {
-        ir_carrier_off(IR_SPACE_TIME);  // Bit 0: shorter space
+        ir_carrier_off(IR_SPACE_TIME);
     }
 }
 
-// Send raw IR data (MSB first)
+// Send raw IR data (with header)
 static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes) {
     if (len_bytes == 0 || len_bytes > MAX_IR_DATA_LEN) {
         LOG_ERR("Invalid IR data length: %d", len_bytes);
@@ -577,7 +653,7 @@ static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes) {
     k_mutex_lock(&ir_mutex, K_FOREVER);
     
     if (ir_data.is_transmitting) {
-        LOG_WRN("IR transmission already in progress");
+        LOG_WRN("IR transmission in progress");
         k_mutex_unlock(&ir_mutex);
         return -EBUSY;
     }
@@ -585,32 +661,175 @@ static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes) {
     ir_data.is_transmitting = true;
     ir_status.bits_sent = 0;
     
-    LOG_INF("📡 Sending IR data: %d bytes", len_bytes);
+    LOG_INF("📡 Sending IR: %d bytes", len_bytes);
     
-    // Send each byte (MSB first)
+    // Send NEC header
+    ir_send_header();
+    
+    // Send each byte (LSB first for NEC protocol)
     for (uint16_t i = 0; i < len_bytes; i++) {
         uint8_t byte = data[i];
         
-        // Send 8 bits (MSB first)
-        for (int bit = 7; bit >= 0; bit--) {
+        for (int bit = 0; bit < 8; bit++) {
             ir_send_bit((byte >> bit) & 0x01);
             ir_status.bits_sent++;
         }
     }
     
-    // Final mark
+    // Stop bit
     ir_carrier_on(IR_MARK_TIME);
-    ir_carrier_off(1000);  // 1ms trailing space
+    ir_carrier_off(1000);
     
     ir_data.is_transmitting = false;
-    ir_status.last_result = 0;  // Success
+    ir_status.last_result = 0;
     
-    LOG_INF("✅ IR transmission complete: %d bits sent", ir_status.bits_sent);
+    LOG_INF("✅ IR sent: %d bits", ir_status.bits_sent);
     
     k_mutex_unlock(&ir_mutex);
-    
     return 0;
 }
+
+
+
+// GPIO interrupt callback for IR RX
+static void ir_rx_interrupt(const struct device *dev, 
+                            struct gpio_callback *cb, 
+                            uint32_t pins) {
+    int64_t now = k_uptime_get() * 1000;  // Convert to microseconds
+    int pin_state = gpio_pin_get(gpio_dev, IR_RX_PIN);
+    
+    if (!ir_rx.is_receiving) {
+        // Start of new IR signal
+        ir_rx.is_receiving = true;
+        ir_rx.pulse_count = 0;
+        ir_rx.last_edge_time = now;
+        LOG_DBG("📥 IR RX started");
+        return;
+    }
+    
+    // Calculate pulse duration
+    uint32_t duration = (uint32_t)(now - ir_rx.last_edge_time);
+    
+    // Timeout check
+    if (duration > IR_RX_TIMEOUT_US) {
+        LOG_INF("📥 IR RX complete: %d pulses", ir_rx.pulse_count);
+        ir_rx.is_receiving = false;
+        
+        // Convert to bytes and save
+        ir_convert_pulses_to_bytes();
+        return;
+    }
+    
+    // Store pulse
+    if (ir_rx.pulse_count < IR_MAX_PULSES) {
+        ir_rx.pulses[ir_rx.pulse_count].duration_us = duration;
+        ir_rx.pulses[ir_rx.pulse_count].is_mark = (pin_state == 0);  // Active LOW receiver
+        ir_rx.pulse_count++;
+    }
+    
+    ir_rx.last_edge_time = now;
+}
+
+// Convert captured pulses to NEC bytes
+static void ir_convert_pulses_to_bytes(void) {
+    k_mutex_lock(&ir_rx_mutex, K_FOREVER);
+    
+    if (ir_rx.pulse_count < 4) {
+        LOG_WRN("Too few pulses: %d", ir_rx.pulse_count);
+        k_mutex_unlock(&ir_rx_mutex);
+        return;
+    }
+    
+    // Verify header (9ms mark + 4.5ms space)
+    if (ir_rx.pulses[0].duration_us < (IR_HEADER_MARK - IR_TOLERANCE_US) ||
+        ir_rx.pulses[0].duration_us > (IR_HEADER_MARK + IR_TOLERANCE_US)) {
+        LOG_WRN("Invalid header mark: %d us", ir_rx.pulses[0].duration_us);
+        k_mutex_unlock(&ir_rx_mutex);
+        return;
+    }
+    
+    // Decode bits
+    uint8_t decoded_data[MAX_IR_DATA_LEN] = {0};
+    uint16_t byte_count = 0;
+    uint8_t current_byte = 0;
+    uint8_t bit_index = 0;
+    
+    // Start from pulse 2 (after header)
+    for (int i = 2; i < ir_rx.pulse_count - 1; i += 2) {
+        uint32_t space_duration = ir_rx.pulses[i + 1].duration_us;
+        
+        // Determine if bit is 0 or 1
+        bool is_one = (space_duration > (IR_ONE_SPACE - IR_TOLERANCE_US));
+        
+        if (is_one) {
+            current_byte |= (1 << bit_index);
+        }
+        
+        bit_index++;
+        
+        if (bit_index == 8) {
+            decoded_data[byte_count++] = current_byte;
+            current_byte = 0;
+            bit_index = 0;
+            
+            if (byte_count >= MAX_IR_DATA_LEN) break;
+        }
+    }
+    
+    // Save decoded data
+    if (byte_count > 0) {
+        memcpy(ir_data.data, decoded_data, byte_count);
+        ir_data.data_len = byte_count;
+        
+        LOG_INF("✅ IR decoded: %d bytes", byte_count);
+        LOG_HEXDUMP_INF(decoded_data, byte_count, "IR data:");
+        
+        // Notify app
+        uint8_t notify_data[4] = {
+            0x02,  // Status: new IR received
+            (byte_count >> 8) & 0xFF,
+            byte_count & 0xFF,
+            0x00
+        };
+        
+        k_mutex_lock(&conn_mutex, K_FOREVER);
+        for (int i = 0; i < MAX_CONNECTIONS; i++) {
+            if (active_conns[i]) {
+                bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[26], 
+                              notify_data, sizeof(notify_data));
+            }
+        }
+        k_mutex_unlock(&conn_mutex);
+    }
+    
+    k_mutex_unlock(&ir_rx_mutex);
+}
+
+// Start IR learning mode
+static int ir_start_learning(void) {
+    k_mutex_lock(&ir_rx_mutex, K_FOREVER);
+    
+    ir_rx.pulse_count = 0;
+    ir_rx.is_receiving = false;
+    
+    LOG_INF("📚 IR learning mode started - point remote and press button");
+    
+    k_mutex_unlock(&ir_rx_mutex);
+    return 0;
+}
+
+// Stop IR learning mode
+static int ir_stop_learning(void) {
+    k_mutex_lock(&ir_rx_mutex, K_FOREVER);
+    
+    ir_rx.is_receiving = false;
+    LOG_INF("⏹️  IR learning mode stopped");
+    
+    k_mutex_unlock(&ir_rx_mutex);
+    return 0;
+}
+
+
 
 // ============================================================================
 // BLE HANDLERS FOR IR RAW DATA
@@ -688,6 +907,130 @@ static ssize_t write_ir_raw_data(struct bt_conn *conn, const struct bt_gatt_attr
     
     return len;
 }
+
+
+
+// BLE UUID cho IR Learning Control
+#define BT_UUID_IR_LEARNING_VAL \
+    BT_UUID_128_ENCODE(0x12345678, 0x1234, 0x5678, 0x1234, 0x56789abcdefe)
+#define BT_UUID_IR_LEARNING \
+    BT_UUID_DECLARE_128(BT_UUID_IR_LEARNING_VAL)
+
+// Handler: Start/Stop learning mode
+static ssize_t write_ir_learning(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                  const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    if (len < 1) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+
+    const uint8_t *data = (const uint8_t *)buf;
+    uint8_t cmd = data[0];
+    
+    switch (cmd) {
+        case 0x01:  // Start learning
+            ir_start_learning();
+            break;
+            
+        case 0x02:  // Stop learning
+            ir_stop_learning();
+            break;
+            
+        case 0x03:  // Save learned IR to command DB
+            if (len < 5) {
+                return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+            }
+            
+            uint16_t cmd_id = (data[1] << 8) | data[2];
+            uint8_t desc_len = data[3];
+            
+            if (ir_data.data_len == 0) {
+                LOG_ERR("No IR data to save");
+                return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+            }
+            
+            // Save to command database
+            k_mutex_lock(&ir_mutex, K_FOREVER);
+            
+            struct ir_command *cmd_ptr = find_ir_command(cmd_id);
+            if (cmd_ptr == NULL) {
+                if (ir_cmd_count >= MAX_IR_COMMANDS) {
+                    k_mutex_unlock(&ir_mutex);
+                    return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
+                }
+                cmd_ptr = &ir_commands[ir_cmd_count++];
+            }
+            
+            cmd_ptr->cmd_id = cmd_id;
+            cmd_ptr->data_len = ir_data.data_len;
+            memcpy(cmd_ptr->data, ir_data.data, ir_data.data_len);
+            memcpy(cmd_ptr->description, &data[4], desc_len);
+            cmd_ptr->description[desc_len] = '\0';
+            
+            save_ir_commands();
+            
+            k_mutex_unlock(&ir_mutex);
+            
+            LOG_INF("💾 Learned IR saved as Command %u: '%s'", cmd_id, cmd_ptr->description);
+            break;
+            
+        default:
+            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    return len;
+}
+
+// Handler: App gửi IR code trực tiếp (không học từ remote)
+static ssize_t write_ir_from_app(struct bt_conn *conn, const struct bt_gatt_attr *attr,
+                                  const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
+    // Format: [cmd_id_h][cmd_id_l][desc_len][description][data...]
+    if (len < 4) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+
+    const uint8_t *data = (const uint8_t *)buf;
+    uint16_t cmd_id = (data[0] << 8) | data[1];
+    uint8_t desc_len = data[2];
+    
+    if ((3 + desc_len) >= len) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+    
+    uint16_t ir_data_len = len - 3 - desc_len;
+    
+    if (ir_data_len > MAX_IR_DATA_LEN) {
+        return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+    }
+    
+    k_mutex_lock(&ir_mutex, K_FOREVER);
+    
+    // Find or create command
+    struct ir_command *cmd = find_ir_command(cmd_id);
+    if (cmd == NULL) {
+        if (ir_cmd_count >= MAX_IR_COMMANDS) {
+            k_mutex_unlock(&ir_mutex);
+            return BT_GATT_ERR(BT_ATT_ERR_INSUFFICIENT_RESOURCES);
+        }
+        cmd = &ir_commands[ir_cmd_count++];
+    }
+    
+    cmd->cmd_id = cmd_id;
+    cmd->data_len = ir_data_len;
+    memcpy(cmd->description, &data[3], desc_len);
+    cmd->description[desc_len] = '\0';
+    memcpy(cmd->data, &data[3 + desc_len], ir_data_len);
+    
+    save_ir_commands();
+    
+    k_mutex_unlock(&ir_mutex);
+    
+    LOG_INF("📲 IR from app saved: Command %u '%s' (%d bytes)", 
+            cmd_id, cmd->description, ir_data_len);
+    
+    return len;
+}
+
+
 
 // ============================================================================
 // BLE HANDLERS FOR IR COMMAND DATABASE
@@ -2630,6 +2973,15 @@ BT_GATT_SERVICE_DEFINE(battery_monitor_svc,
                           BT_GATT_PERM_READ | BT_GATT_PERM_WRITE,
                           read_ir_auto_enable, write_ir_auto_enable, NULL),
     BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+
+    // IR Learning Control
+    BT_GATT_CHARACTERISTIC(BT_UUID_IR_LEARNING,
+                          BT_GATT_CHRC_WRITE | BT_GATT_CHRC_NOTIFY,
+                          BT_GATT_PERM_WRITE,
+                          NULL, write_ir_learning, NULL),
+    BT_GATT_CCC(NULL, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+
+    
 );
 
 
@@ -2884,6 +3236,24 @@ static int battery_monitor_init(void) {
         LOG_ERR("Failed to configure IR LED: %d", ret);
         return ret;
     }
+
+
+        // Configure IR RX với interrupt
+    ret = gpio_pin_configure(gpio_dev, IR_RX_PIN, GPIO_INPUT | GPIO_PULL_UP);
+    if (ret < 0) {
+        LOG_ERR("Failed to configure IR RX: %d", ret);
+        return ret;
+    }
+
+    ret = gpio_pin_interrupt_configure(gpio_dev, IR_RX_PIN, GPIO_INT_EDGE_BOTH);
+    if (ret < 0) {
+        LOG_ERR("Failed to configure IR RX interrupt: %d", ret);
+        return ret;
+    }
+
+    gpio_init_callback(&ir_rx_cb_data, ir_rx_interrupt, BIT(IR_RX_PIN));
+    gpio_add_callback(gpio_dev, &ir_rx_cb_data);
+
     LOG_INF("IR LED configured on P0.%d", IR_LED_PIN);
     
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
