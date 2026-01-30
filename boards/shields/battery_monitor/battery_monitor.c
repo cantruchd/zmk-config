@@ -485,6 +485,8 @@ static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes);
 static int save_ir_commands(void);
 static int save_ir_auto_rules(void);
 static int save_ir_auto_state(void);
+static void ir_convert_pulses_to_bytes(void);
+static int ir_start_learning(void);
 
 
 
@@ -690,7 +692,7 @@ static void ir_rx_interrupt(const struct device *dev,
 }
 
 // Convert captured pulses to NEC bytes
-static void ir_convert_pulses_to_bytes(void) {
+'static void ir_convert_pulses_to_bytes(void)' {
     k_mutex_lock(&ir_rx_mutex, K_FOREVER);
     
     if (ir_rx.pulse_count < 4) {
