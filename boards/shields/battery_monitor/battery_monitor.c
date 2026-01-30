@@ -336,7 +336,13 @@ static void start_auto_updates(void);
 #define IR_MAX_PULSES     600     // Max pulses to capture
 #define IR_TOLERANCE_US   200     // ±200us tolerance
 
+// IR RX state management
+static bool ir_learning_active = false;  // Chỉ học khi user kích hoạt
+static struct k_work_delayable ir_learning_timeout_work;
 
+// Mutex to prevent TX/RX conflict
+static K_MUTEX_DEFINE(ir_tx_rx_mutex);
+static bool ir_tx_active = false;
 
 // IR Protocol types
 typedef enum {
@@ -993,10 +999,55 @@ static void ir_rx_timeout_handler(struct k_work *work) {
     ir_detect_and_decode();
 }
 
-// ⭐ SỬA LẠI HOÀN TOÀN ir_rx_interrupt()
+
+static void ir_learning_timeout_handler(struct k_work *work) {
+    if (!ir_learning_active) return;
+    
+    LOG_WRN("⏱️  Learning timeout (10s) - stopping");
+    
+    ir_learning_active = false;
+    ir_rx.is_receiving = false;
+    
+    // Cancel RX timeout nếu đang chờ
+    k_work_cancel_delayable(&ir_rx_timeout_work);
+    
+    // Nếu có data thì decode
+    if (ir_rx.pulse_count > 0) {
+        LOG_INF("📥 Processing %d pulses before timeout", ir_rx.pulse_count);
+        ir_detect_and_decode();
+    } else {
+        LOG_WRN("❌ No IR signal received during learning period");
+        
+        // Notify app: learning failed
+        uint8_t notify_data[4] = {
+            0xFF,  // Learning timeout
+            0x00, 0x00, 0x00
+        };
+        
+        k_mutex_lock(&conn_mutex, K_FOREVER);
+        for (int i = 0; i < MAX_CONNECTIONS; i++) {
+            if (active_conns[i]) {
+                bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[26],
+                              notify_data, sizeof(notify_data));
+            }
+        }
+        k_mutex_unlock(&conn_mutex);
+    }
+}
+
 static void ir_rx_interrupt(const struct device *dev, 
                             struct gpio_callback *cb, 
                             uint32_t pins) {
+    // ⭐ Chặn RX khi TX đang hoạt động
+    if (ir_tx_active) {
+        return;
+    }
+    
+    // ⭐ Chỉ nhận khi learning mode được kích hoạt
+    if (!ir_learning_active) {
+        return;
+    }
+    
     uint32_t now_cycles = k_cycle_get_32();
     int pin_state = gpio_pin_get(gpio_dev, IR_RX_PIN);
     
@@ -1006,14 +1057,14 @@ static void ir_rx_interrupt(const struct device *dev,
         ir_rx.pulse_count = 0;
         ir_rx.last_edge_cycles = now_cycles;
         
-        // ⭐ Start timeout timer (100ms)
+        // Start timeout timer (100ms)
         k_work_reschedule(&ir_rx_timeout_work, K_MSEC(100));
         
-        LOG_DBG("📥 IR RX started");
+        LOG_INF("📥 IR RX started");
         return;
     }
     
-    // ⭐ Reset timeout on every edge
+    // Reset timeout on every edge
     k_work_reschedule(&ir_rx_timeout_work, K_MSEC(100));
     
     uint32_t cycles_elapsed = now_cycles - ir_rx.last_edge_cycles;
@@ -1025,7 +1076,7 @@ static void ir_rx_interrupt(const struct device *dev,
         return;
     }
     
-    // ⭐ Store pulse in original format (cho decode functions)
+    // Store pulse in original format
     if (ir_rx.pulse_count < IR_MAX_PULSES) {
         ir_rx.pulses[ir_rx.pulse_count].duration_us = duration_us;
         ir_rx.pulses[ir_rx.pulse_count].is_mark = (pin_state == 0);  // Active LOW
@@ -1039,7 +1090,9 @@ static void ir_rx_interrupt(const struct device *dev,
         // Buffer full
         LOG_WRN("⚠️  Pulse buffer full at %d pulses!", IR_MAX_PULSES);
         ir_rx.is_receiving = false;
+        ir_learning_active = false;  // ⭐ Stop learning
         k_work_cancel_delayable(&ir_rx_timeout_work);
+        k_work_cancel_delayable(&ir_learning_timeout_work);
         
         // Trigger decode immediately
         ir_detect_and_decode();
@@ -1048,6 +1101,8 @@ static void ir_rx_interrupt(const struct device *dev,
     
     ir_rx.last_edge_cycles = now_cycles;
 }
+
+
 
 
 // Helper: Convert CPU cycles to microseconds
@@ -1380,24 +1435,34 @@ static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes) {
 // }
 
 
-// Start IR learning mode
 static int ir_start_learning(void) {
     k_mutex_lock(&ir_rx_mutex, K_FOREVER);
     
     ir_rx.pulse_count = 0;
     ir_rx.is_receiving = false;
-    
-    LOG_INF("📚 IR learning mode started - point remote and press button");
+    ir_learning_active = true;  // ⭐ Kích hoạt learning mode
     
     k_mutex_unlock(&ir_rx_mutex);
+    
+    // ⭐ Bắt đầu timeout 10s
+    k_work_reschedule(&ir_learning_timeout_work, K_MSEC(10000));
+    
+    LOG_INF("📚 IR learning mode started - 10s timeout");
+    LOG_INF("   Point remote and press button now!");
+    
     return 0;
 }
 
-// Stop IR learning mode
 static int ir_stop_learning(void) {
     k_mutex_lock(&ir_rx_mutex, K_FOREVER);
     
+    ir_learning_active = false;
     ir_rx.is_receiving = false;
+    
+    // Cancel timeouts
+    k_work_cancel_delayable(&ir_rx_timeout_work);
+    k_work_cancel_delayable(&ir_learning_timeout_work);
+    
     LOG_INF("⏹️  IR learning mode stopped");
     
     k_mutex_unlock(&ir_rx_mutex);
@@ -1846,6 +1911,11 @@ static int ir_send_decoded(const struct ir_decoded_data *decoded) {
         return -EBUSY;
     }
     
+    // ⭐ Chặn RX khi TX
+    k_mutex_lock(&ir_tx_rx_mutex, K_FOREVER);
+    ir_tx_active = true;
+    k_mutex_unlock(&ir_tx_rx_mutex);
+    
     ir_data.is_transmitting = true;
     
     // Send based on protocol
@@ -1922,8 +1992,14 @@ static int ir_send_decoded(const struct ir_decoded_data *decoded) {
         // Add other protocols...
         
         default:
-            LOG_ERR("Unknown decoded protocol: %d", decoded->protocol);
+              LOG_ERR("Unknown decoded protocol: %d", decoded->protocol);
             ir_data.is_transmitting = false;
+            
+            // ⭐ Mở lại RX
+            k_mutex_lock(&ir_tx_rx_mutex, K_FOREVER);
+            ir_tx_active = false;
+            k_mutex_unlock(&ir_tx_rx_mutex);
+            
             k_mutex_unlock(&ir_mutex);
             return -EINVAL;
     }
@@ -1931,13 +2007,17 @@ static int ir_send_decoded(const struct ir_decoded_data *decoded) {
     ir_data.is_transmitting = false;
     ir_status.last_result = 0;
     
+    // ⭐ Mở lại RX
+    k_mutex_lock(&ir_tx_rx_mutex, K_FOREVER);
+    ir_tx_active = false;
+    k_mutex_unlock(&ir_tx_rx_mutex);
+    
     LOG_INF("✅ Decoded IR sent");
     
     k_mutex_unlock(&ir_mutex);
     return 0;
 }
 
-// ⭐ Send raw pulses
 static int ir_send_raw_pulses(const struct ir_pulse_compressed *pulses, uint16_t pulse_count) {
     if (pulse_count == 0 || pulse_count > IR_MAX_PULSES) {
         return -EINVAL;
@@ -1949,6 +2029,11 @@ static int ir_send_raw_pulses(const struct ir_pulse_compressed *pulses, uint16_t
         k_mutex_unlock(&ir_mutex);
         return -EBUSY;
     }
+    
+    // ⭐ Chặn RX khi TX
+    k_mutex_lock(&ir_tx_rx_mutex, K_FOREVER);
+    ir_tx_active = true;
+    k_mutex_unlock(&ir_tx_rx_mutex);
     
     ir_data.is_transmitting = true;
     
@@ -1967,6 +2052,11 @@ static int ir_send_raw_pulses(const struct ir_pulse_compressed *pulses, uint16_t
     
     ir_data.is_transmitting = false;
     ir_status.last_result = 0;
+    
+    // ⭐ Mở lại RX
+    k_mutex_lock(&ir_tx_rx_mutex, K_FOREVER);
+    ir_tx_active = false;
+    k_mutex_unlock(&ir_tx_rx_mutex);
     
     LOG_INF("✅ RAW IR sent");
     
@@ -4055,6 +4145,9 @@ static int battery_monitor_init(void) {
    
     // ⭐ Initialize IR RX timeout work
     k_work_init_delayable(&ir_rx_timeout_work, ir_rx_timeout_handler);
+
+    // ⭐ THÊM DÒNG NÀY:
+    k_work_init_delayable(&ir_learning_timeout_work, ir_learning_timeout_handler);
 
 
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
