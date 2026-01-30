@@ -332,7 +332,7 @@ static void start_auto_updates(void);
 
 // IR RX Configuration
 #define IR_RX_TIMEOUT_US  100000  // 100ms timeout
-#define IR_MAX_PULSES     256     // Max pulses to capture
+#define IR_MAX_PULSES     1024     // Max pulses to capture
 #define IR_TOLERANCE_US   200     // ±200us tolerance
 
 
@@ -717,7 +717,7 @@ static void ir_rx_interrupt(const struct device *dev,
 static void ir_convert_pulses_to_bytes(void) {
     k_mutex_lock(&ir_rx_mutex, K_FOREVER);
     
-    if (ir_rx.pulse_count < 4) {
+    if (ir_rx.pulse_count < 10) {
         LOG_WRN("Too few pulses: %d", ir_rx.pulse_count);
         k_mutex_unlock(&ir_rx_mutex);
         return;
@@ -726,84 +726,111 @@ static void ir_convert_pulses_to_bytes(void) {
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     LOG_INF("📊 IR DECODE: %d pulses captured", ir_rx.pulse_count);
     
-    // Log first 10 pulses
-    for (int i = 0; i < MIN(10, ir_rx.pulse_count); i++) {
-        LOG_INF("  Pulse[%d]: %d us %s", 
+    // Log first 20 pulses
+    for (int i = 0; i < MIN(20, ir_rx.pulse_count); i++) {
+        LOG_INF("  [%d]: %4d us %s", 
                 i, 
                 ir_rx.pulses[i].duration_us,
                 ir_rx.pulses[i].is_mark ? "MARK" : "SPACE");
     }
     
-    // ⭐ KHÔNG CHECK HEADER - Decode trực tiếp
-    // Tìm pulse duration trung bình để phân biệt SHORT/LONG
-    uint32_t total_duration = 0;
-    uint32_t mark_count = 0;
+    // ⭐ PHASE 1: Tìm MARK pulses và tính threshold
+    uint32_t mark_durations[256];
+    uint16_t mark_count = 0;
+    uint32_t total_mark = 0;
     
-    for (int i = 0; i < ir_rx.pulse_count; i++) {
+    for (int i = 0; i < ir_rx.pulse_count && mark_count < 256; i++) {
         if (ir_rx.pulses[i].is_mark) {
-            total_duration += ir_rx.pulses[i].duration_us;
-            mark_count++;
+            mark_durations[mark_count++] = ir_rx.pulses[i].duration_us;
+            total_mark += ir_rx.pulses[i].duration_us;
         }
     }
     
-    uint32_t avg_mark = (mark_count > 0) ? (total_duration / mark_count) : 500;
-    uint32_t threshold = avg_mark * 2; // Nếu pulse > 2x trung bình = LONG
+    if (mark_count < 4) {
+        LOG_WRN("Not enough MARK pulses: %d", mark_count);
+        k_mutex_unlock(&ir_rx_mutex);
+        return;
+    }
     
-    LOG_INF("📏 Avg MARK: %d us, Threshold: %d us", avg_mark, threshold);
+    uint32_t avg_mark = total_mark / mark_count;
     
-    // Decode bits (bỏ qua 2 pulse đầu nếu là header)
+    // Tìm min/max MARK duration
+    uint32_t min_mark = 10000, max_mark = 0;
+    for (int i = 0; i < mark_count; i++) {
+        if (mark_durations[i] < min_mark) min_mark = mark_durations[i];
+        if (mark_durations[i] > max_mark) max_mark = mark_durations[i];
+    }
+    
+    // Threshold = giữa short và long pulse
+    uint32_t threshold = (min_mark + max_mark) / 2;
+    
+    LOG_INF("📊 MARK Analysis:");
+    LOG_INF("   Count: %d pulses", mark_count);
+    LOG_INF("   Min: %d us (bit 0)", min_mark);
+    LOG_INF("   Max: %d us (bit 1)", max_mark);
+    LOG_INF("   Avg: %d us", avg_mark);
+    LOG_INF("   Threshold: %d us", threshold);
+    
+    // ⭐ PHASE 2: Decode bits từ MARK pulses
     uint8_t decoded_data[MAX_IR_DATA_LEN] = {0};
     uint16_t byte_count = 0;
     uint8_t current_byte = 0;
     uint8_t bit_index = 0;
+    uint8_t decoded_bits = 0;
     
-    // ⭐ Bắt đầu decode từ pulse thứ 3 (skip potential header)
-    int start_pulse = 2;
-    if (ir_rx.pulse_count > 10 && 
-        ir_rx.pulses[0].duration_us > 5000) {
-        // Có header dài -> skip
-        start_pulse = 2;
-        LOG_INF("✅ Header detected, skipping first 2 pulses");
-    } else {
-        // Không có header -> decode from start
-        start_pulse = 0;
-        LOG_INF("⚠️  No standard header, decoding from pulse 0");
+    // Skip first 2 pulses (header)
+    int start_idx = 0;
+    
+    // Tìm pulse đầu tiên > 2000us (header)
+    for (int i = 0; i < MIN(10, ir_rx.pulse_count); i++) {
+        if (ir_rx.pulses[i].duration_us > 2000) {
+            start_idx = i + 1; // Skip header
+            LOG_INF("✅ Header found at pulse %d (%d us)", 
+                    i, ir_rx.pulses[i].duration_us);
+            break;
+        }
     }
     
-    for (int i = start_pulse; i < ir_rx.pulse_count - 1; i += 2) {
-        // Each bit = MARK + SPACE
+    LOG_INF("🔍 Decoding bits from pulse %d:", start_idx);
+    
+    for (int i = start_idx; i < ir_rx.pulse_count; i++) {
+        // Chỉ decode MARK pulses
         if (!ir_rx.pulses[i].is_mark) continue;
         
-        uint32_t mark_duration = ir_rx.pulses[i].duration_us;
-        uint32_t space_duration = ir_rx.pulses[i + 1].duration_us;
+        uint32_t duration = ir_rx.pulses[i].duration_us;
         
-        // Determine bit value
-        bool is_one;
+        // Skip very long/short pulses (noise)
+        if (duration < 200 || duration > 2000) continue;
         
-        // Method 1: Space encoding (NEC style)
-        if (space_duration > threshold) {
-            is_one = true;
-        } else {
-            is_one = false;
-        }
+        bool bit_value = (duration > threshold);
         
-        // Method 2 fallback: Mark encoding
-        if (mark_duration > threshold) {
-            is_one = true;
-        }
-        
-        if (is_one) {
+        if (bit_value) {
             current_byte |= (1 << bit_index);
         }
         
+        // Log first 32 bits
+        if (decoded_bits < 32) {
+            LOG_INF("  Bit[%2d]: %d (%4d us)", 
+                    decoded_bits, bit_value ? 1 : 0, duration);
+        }
+        
         bit_index++;
+        decoded_bits++;
         
         if (bit_index == 8) {
             decoded_data[byte_count++] = current_byte;
             
-            if (byte_count <= 8) { // Log first 8 bytes
-                LOG_INF("  Byte[%d] = 0x%02X", byte_count - 1, current_byte);
-            }
+            LOG_INF("    → Byte[%d] = 0x%02X (binary: %c%c%c%c%c%c%c%c)", 
+                    byte_count - 1, 
+                    current_byte,
+                    (current_byte & 0x80) ? '1' : '0',
+                    (current_byte & 0x40) ? '1' : '0',
+                    (current_byte & 0x20) ? '1' : '0',
+                    (current_byte & 0x10) ? '1' : '0',
+                    (current_byte & 0x08) ? '1' : '0',
+                    (current_byte & 0x04) ? '1' : '0',
+                    (current_byte & 0x02) ? '1' : '0',
+                    (current_byte & 0x01) ? '1' : '0');
             
             current_byte = 0;
             bit_index = 0;
@@ -812,14 +839,25 @@ static void ir_convert_pulses_to_bytes(void) {
         }
     }
     
-    // Save decoded data
+    // Save partial byte if exists
+    if (bit_index > 0) {
+        decoded_data[byte_count++] = current_byte;
+        LOG_INF("    → Byte[%d] = 0x%02X (partial, %d bits)", 
+                byte_count - 1, current_byte, bit_index);
+    }
+    
+    // ⭐ PHASE 3: Save result
     if (byte_count > 0) {
         memcpy(ir_data.data, decoded_data, byte_count);
         ir_data.data_len = byte_count;
         
-        LOG_INF("✅ IR decoded successfully!");
-        LOG_INF("   Data: %d bytes (%d bits)", byte_count, byte_count * 8);
-        LOG_HEXDUMP_INF(decoded_data, MIN(byte_count, 32), "IR Code");
+        LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        LOG_INF("✅ IR DECODED SUCCESSFULLY!");
+        LOG_INF("   Total bits: %d", decoded_bits);
+        LOG_INF("   Data bytes: %d", byte_count);
+        LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        LOG_HEXDUMP_INF(decoded_data, byte_count, "IR Raw Data");
+        LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         
         // Notify app
         uint8_t notify_data[4] = {
@@ -839,9 +877,9 @@ static void ir_convert_pulses_to_bytes(void) {
         k_mutex_unlock(&conn_mutex);
     } else {
         LOG_WRN("❌ No valid data decoded");
+        LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     }
     
-    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     k_mutex_unlock(&ir_rx_mutex);
 }
 
