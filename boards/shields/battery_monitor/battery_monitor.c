@@ -28,6 +28,10 @@
 #include <zmk/event_manager.h>
 #include <hal/nrf_power.h>
 
+// XÓA dòng trên và THAY BẰNG:
+#include <zephyr/drivers/pwm.h>
+#include <zephyr/devicetree.h>
+
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 
@@ -332,7 +336,7 @@ static void start_auto_updates(void);
 // IR AC CONTROL - THÊM VÀO ĐẦU FILE (sau LOG_MODULE_DECLARE)
 // ============================================================================
 
-#include <zephyr/drivers/pwm.h>
+
 // IR Configuration
 #define IR_TX_PIN   20  // P0.20 (D3) - IR LED
 #define IR_RX_PIN   11  // P0.11 (D7) - IR Receiver
