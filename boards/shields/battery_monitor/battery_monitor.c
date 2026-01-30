@@ -497,7 +497,7 @@ static int ir_start_learning(void);
 // Helper: Convert CPU cycles to microseconds
 static inline uint32_t cycles_to_us(uint32_t cycles) {
     // nRF52840 @ 64MHz
-    return (cycles * 1000000ULL) / CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC;
+    return (cycles * 1000000ULL) / sys_clock_hw_cycles_per_sec();
 }
 
 
