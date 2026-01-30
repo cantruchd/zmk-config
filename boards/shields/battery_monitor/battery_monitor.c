@@ -333,7 +333,7 @@ static void start_auto_updates(void);
 
 // IR RX Configuration
 #define IR_RX_TIMEOUT_US  100000  // 100ms timeout
-#define IR_MAX_PULSES     1024     // Max pulses to capture
+#define IR_MAX_PULSES     600     // Max pulses to capture
 #define IR_TOLERANCE_US   200     // ±200us tolerance
 
 
@@ -473,12 +473,12 @@ struct ir_command {
         // Raw pulse data (~1KB cho unknown protocols)
         struct {
             uint16_t pulse_count;
-            struct ir_pulse_compressed pulses[512];
+            struct ir_pulse_compressed pulses[300];
         } raw;
     };
 } __packed;
 
-#define MAX_IR_COMMANDS 200  // Hầu hết sẽ là decoded
+#define MAX_IR_COMMANDS 100  // Hầu hết sẽ là decoded
 
 static int ir_send_command(const struct ir_command *cmd);
 
