@@ -480,7 +480,7 @@ struct ir_command {
 
 #define MAX_IR_COMMANDS 200  // Hầu hết sẽ là decoded
 
-static int ir_send_command(ir_protocol_t protocol, const uint8_t *data, uint8_t bits);
+static int ir_send_command(const struct ir_command *cmd)
 
 // Check if duration matches expected value (with tolerance)
 static inline bool match_mark(uint32_t duration, uint32_t expected) {
