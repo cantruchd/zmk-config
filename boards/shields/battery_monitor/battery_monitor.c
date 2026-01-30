@@ -511,6 +511,8 @@ static void check_ir_auto_control(void) {
     int64_t now = k_uptime_get();
 
     int16_t temporary = k_uptime_ticks(); // Giả sử đã có hàm lấy nhiệt độ nội bộ
+
+    int temp2 = k_cycle_get_32();
     
     // Duyệt qua tất cả rules (theo thứ tự ưu tiên)
     for (int i = 0; i < MAX_AUTO_RULES; i++) {
