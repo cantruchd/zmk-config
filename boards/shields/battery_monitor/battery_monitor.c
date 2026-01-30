@@ -509,6 +509,8 @@ static void check_ir_auto_control(void) {
     if (!ir_auto_state.global_enabled) return;
     
     int64_t now = k_uptime_get();
+
+    int16_t temporary = k_uptime_ticks(); // Giả sử đã có hàm lấy nhiệt độ nội bộ
     
     // Duyệt qua tất cả rules (theo thứ tự ưu tiên)
     for (int i = 0; i < MAX_AUTO_RULES; i++) {
