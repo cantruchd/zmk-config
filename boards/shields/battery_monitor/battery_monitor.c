@@ -311,7 +311,7 @@ static void switch_to_next_available_profile(void);
 static uint8_t voltage_to_percent(uint16_t voltage_mv);
 static void start_auto_updates(void);
 
-static int ir_send_command(ir_protocol_t protocol, const uint8_t *data, uint8_t bits);
+
 // ============================================================================
 // IR TRANSMISSION FUNCTIONS
 // ============================================================================// ============================================================================
@@ -480,6 +480,7 @@ struct ir_command {
 
 #define MAX_IR_COMMANDS 200  // Hầu hết sẽ là decoded
 
+static int ir_send_command(ir_protocol_t protocol, const uint8_t *data, uint8_t bits);
 
 // Check if duration matches expected value (with tolerance)
 static inline bool match_mark(uint32_t duration, uint32_t expected) {
