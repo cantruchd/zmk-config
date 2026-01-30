@@ -494,6 +494,73 @@ static int ir_start_learning(void);
 // ============================================================================
 
 
+// THÊM VÀO ĐẦU FILE (sau các define)
+static struct k_work_delayable ir_rx_timeout_work;
+
+// Timeout handler
+static void ir_rx_timeout_handler(struct k_work *work) {
+    if (!ir_rx.is_receiving) return;
+    
+    LOG_INF("📥 IR RX complete: %d pulses (timeout)", ir_rx.pulse_count);
+    ir_rx.is_receiving = false;
+    
+    // Convert to bytes
+    ir_convert_pulses_to_bytes();
+}
+
+// SỬA LẠI ir_rx_interrupt():
+static void ir_rx_interrupt(const struct device *dev, 
+                            struct gpio_callback *cb, 
+                            uint32_t pins) {
+    uint32_t now_cycles = k_cycle_get_32();
+    int pin_state = gpio_pin_get(gpio_dev, IR_RX_PIN);
+    
+    if (!ir_rx.is_receiving) {
+        // Start of new IR signal
+        ir_rx.is_receiving = true;
+        ir_rx.pulse_count = 0;
+        ir_rx.last_edge_cycles = now_cycles;
+        
+        // ⭐ Start timeout timer (100ms)
+        k_work_reschedule(&ir_rx_timeout_work, K_MSEC(100));
+        
+        LOG_DBG("📥 IR RX started");
+        return;
+    }
+    
+    // ⭐ Reset timeout on every edge
+    k_work_reschedule(&ir_rx_timeout_work, K_MSEC(100));
+    
+    uint32_t cycles_elapsed = now_cycles - ir_rx.last_edge_cycles;
+    uint32_t duration_us = cycles_to_us(cycles_elapsed);
+    
+    // ❌ XÓA PHẦN TIMEOUT CHECK Ở ĐÂY (không cần nữa)
+    
+    // Store pulse
+    if (ir_rx.pulse_count < IR_MAX_PULSES) {
+        ir_rx.pulses[ir_rx.pulse_count].duration_us = duration_us;
+        ir_rx.pulses[ir_rx.pulse_count].is_mark = (pin_state == 0);
+        ir_rx.pulse_count++;
+        
+        if (ir_rx.pulse_count % 10 == 0) {
+            LOG_DBG("Pulse %d: %d us (%s)", 
+                    ir_rx.pulse_count, duration_us,
+                    pin_state == 0 ? "MARK" : "SPACE");
+        }
+    } else {
+        // Buffer full
+        LOG_WRN("⚠️  Pulse buffer full!");
+        ir_rx.is_receiving = false;
+        k_work_cancel_delayable(&ir_rx_timeout_work);  // ⭐ Cancel timer
+        ir_convert_pulses_to_bytes();
+        return;
+    }
+    
+    ir_rx.last_edge_cycles = now_cycles;
+}
+
+
+
 // Helper: Convert CPU cycles to microseconds
 static inline uint32_t cycles_to_us(uint32_t cycles) {
     // nRF52840 @ 64MHz
@@ -3333,7 +3400,8 @@ static int battery_monitor_init(void) {
     gpio_init_callback(&ir_rx_cb_data, ir_rx_interrupt, BIT(IR_RX_PIN));
     gpio_add_callback(gpio_dev, &ir_rx_cb_data);
 
-   
+        // ⭐ Initialize IR RX timeout work
+    k_work_init_delayable(&ir_rx_timeout_work, ir_rx_timeout_handler);
     
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     LOG_INF("📡 CONNECTION MANAGEMENT:");
