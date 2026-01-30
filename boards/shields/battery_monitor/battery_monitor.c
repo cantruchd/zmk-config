@@ -1650,7 +1650,7 @@ static ssize_t write_ir_from_app(struct bt_conn *conn, const struct bt_gatt_attr
 static ssize_t read_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                void *buf, uint16_t len, uint16_t offset) {
     // Format: [cmd_count][cmd1_metadata][cmd2_metadata]...
-    // Metadata: [cmd_id_h][cmd_id_l][data_len_h][data_len_l][description_len][description]
+    // Metadata: [cmd_id_h][cmd_id_l][protocol][bits_h][bits_l][description_len][description]
     
     uint8_t response[512];
     uint16_t pos = 0;
@@ -1662,8 +1662,18 @@ static ssize_t read_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *a
         
         response[pos++] = (cmd->cmd_id >> 8) & 0xFF;
         response[pos++] = cmd->cmd_id & 0xFF;
-        response[pos++] = (cmd->data_len >> 8) & 0xFF;
-        response[pos++] = cmd->data_len & 0xFF;
+        response[pos++] = cmd->protocol;
+        
+        // Calculate data size based on protocol
+        uint16_t data_size = 0;
+        if (cmd->protocol == IR_PROTOCOL_RAW) {
+            data_size = cmd->raw.pulse_count * 2;  // 2 bytes per compressed pulse
+        } else {
+            data_size = cmd->decoded.bits;
+        }
+        
+        response[pos++] = (data_size >> 8) & 0xFF;
+        response[pos++] = data_size & 0xFF;
         
         uint8_t desc_len = strlen(cmd->description);
         response[pos++] = desc_len;
@@ -1680,7 +1690,7 @@ static ssize_t read_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *a
 static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                 const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
     // Format: [operation][cmd_id_h][cmd_id_l][data...]
-    // Operation: 0x01=Add/Update, 0x02=Delete
+    // Operation: 0x01=Add/Update, 0x02=Delete, 0x03=Execute
     
     if (len < 3) {
         return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
@@ -1693,17 +1703,18 @@ static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *
     k_mutex_lock(&ir_mutex, K_FOREVER);
     
     if (operation == 0x01) {  // Add/Update command
-        // Format: [0x01][cmd_id_h][cmd_id_l][data_len_h][data_len_l][desc_len][description][ir_data...]
+        // Format: [0x01][cmd_id_h][cmd_id_l][protocol][data_size_h][data_size_l][desc_len][description][ir_data...]
         
-        if (len < 6) {
+        if (len < 7) {
             k_mutex_unlock(&ir_mutex);
             return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
         }
         
-        uint16_t data_len = (data[3] << 8) | data[4];
-        uint8_t desc_len = data[5];
+        uint8_t protocol = data[3];
+        uint16_t data_size = (data[4] << 8) | data[5];
+        uint8_t desc_len = data[6];
         
-        if (data_len > MAX_IR_DATA_LEN || (6 + desc_len + data_len) > len) {
+        if ((7 + desc_len + data_size) > len) {
             k_mutex_unlock(&ir_mutex);
             return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
         }
@@ -1725,13 +1736,42 @@ static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *
         
         // Update command
         cmd->cmd_id = cmd_id;
-        cmd->data_len = data_len;
-        memcpy(cmd->description, &data[6], desc_len);
+        cmd->protocol = (ir_protocol_t)protocol;
+        memcpy(cmd->description, &data[7], desc_len);
         cmd->description[desc_len] = '\0';
-        memcpy(cmd->data, &data[6 + desc_len], data_len);
         
-        LOG_INF("💾 IR Command %u: '%s' (%d bytes)", 
-                cmd_id, cmd->description, data_len);
+        const uint8_t *ir_data = &data[7 + desc_len];
+        
+        if (cmd->protocol == IR_PROTOCOL_RAW) {
+            // RAW pulses (compressed format)
+            cmd->raw.pulse_count = data_size / 2;
+            
+            if (cmd->raw.pulse_count > 512) {
+                LOG_ERR("Too many pulses: %d", cmd->raw.pulse_count);
+                k_mutex_unlock(&ir_mutex);
+                return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+            }
+            
+            for (int j = 0; j < cmd->raw.pulse_count; j++) {
+                cmd->raw.pulses[j].data = (ir_data[j * 2] << 8) | ir_data[j * 2 + 1];
+            }
+            
+            LOG_INF("💾 IR Command %u: '%s' (RAW, %d pulses)", 
+                    cmd_id, cmd->description, cmd->raw.pulse_count);
+        } else {
+            // Decoded protocol data
+            if (data_size > sizeof(struct ir_decoded_data)) {
+                LOG_ERR("Decoded data too large: %d", data_size);
+                k_mutex_unlock(&ir_mutex);
+                return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+            }
+            
+            memcpy(&cmd->decoded, ir_data, data_size);
+            cmd->decoded.protocol = cmd->protocol;
+            
+            LOG_INF("💾 IR Command %u: '%s' (protocol %d, %d bits)", 
+                    cmd_id, cmd->description, cmd->protocol, cmd->decoded.bits);
+        }
         
         // Save to NVS
         save_ir_commands();
@@ -1755,8 +1795,8 @@ static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *
         
         // Save to NVS
         save_ir_commands();
-    }
-    else if (operation == 0x03) { // Execute command
+        
+    } else if (operation == 0x03) { // Execute command
         LOG_INF("Attempting to execute IR Command ID %u", cmd_id);
         struct ir_command *cmd = find_ir_command(cmd_id);
         if (cmd == NULL) {
@@ -1765,13 +1805,8 @@ static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *
             return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
         }
         
-        if (cmd->data_len == 0) {
-            LOG_WRN("IR Command ID %u has no data to send", cmd_id);
-            k_mutex_unlock(&ir_mutex);
-            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
-        }
-
-        int ret = ir_send_raw_data(cmd->data, cmd->data_len);
+        // Use the unified send function
+        int ret = ir_send_command(cmd);
         if (ret == 0) {
             LOG_INF("✅ Executed IR Command ID %u: '%s'", cmd_id, cmd->description);
         } else {
@@ -1779,6 +1814,9 @@ static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *
             k_mutex_unlock(&ir_mutex);
             return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
         }
+    } else {
+        k_mutex_unlock(&ir_mutex);
+        return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
     
     k_mutex_unlock(&ir_mutex);
