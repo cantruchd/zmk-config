@@ -486,6 +486,7 @@ static int save_ir_auto_rules(void);
 static int save_ir_auto_state(void);
 static void ir_convert_pulses_to_bytes(void);
 static int ir_start_learning(void);
+static inline uint32_t cycles_to_us(uint32_t cycles);
 
 
 
@@ -558,6 +559,9 @@ static void ir_rx_interrupt(const struct device *dev,
     
     ir_rx.last_edge_cycles = now_cycles;
 }
+
+
+
 
 
 
@@ -3400,9 +3404,11 @@ static int battery_monitor_init(void) {
     gpio_init_callback(&ir_rx_cb_data, ir_rx_interrupt, BIT(IR_RX_PIN));
     gpio_add_callback(gpio_dev, &ir_rx_cb_data);
 
-        // ⭐ Initialize IR RX timeout work
+   
+    // ⭐ Initialize IR RX timeout work
     k_work_init_delayable(&ir_rx_timeout_work, ir_rx_timeout_handler);
-    
+
+
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     LOG_INF("📡 CONNECTION MANAGEMENT:");
     LOG_INF("  Max connections: %d", MAX_CONNECTIONS);
