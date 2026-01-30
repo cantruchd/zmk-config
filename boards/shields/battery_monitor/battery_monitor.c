@@ -730,60 +730,6 @@ static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes) {
 
 
 
-// ⭐ FIXED: GPIO interrupt callback
-static void ir_rx_interrupt(const struct device *dev, 
-                            struct gpio_callback *cb, 
-                            uint32_t pins) {
-    uint32_t now_cycles = k_cycle_get_32();
-    int pin_state = gpio_pin_get(gpio_dev, IR_RX_PIN);
-    
-    if (!ir_rx.is_receiving) {
-        // Start of new IR signal
-        ir_rx.is_receiving = true;
-        ir_rx.pulse_count = 0;
-        ir_rx.last_edge_cycles = now_cycles;
-        LOG_DBG("📥 IR RX started");
-        return;
-    }
-    
-    // Calculate pulse duration in microseconds
-    uint32_t cycles_elapsed = now_cycles - ir_rx.last_edge_cycles;
-    uint32_t duration_us = cycles_to_us(cycles_elapsed);
-    
-    // Timeout check (100ms = 100000us)
-    if (duration_us > IR_RX_TIMEOUT_US) {
-        LOG_INF("📥 IR RX complete: %d pulses (timeout)", ir_rx.pulse_count);
-        ir_rx.is_receiving = false;
-        
-        // Convert to bytes
-        ir_convert_pulses_to_bytes();
-        return;
-    }
-    
-    // Store pulse
-    if (ir_rx.pulse_count < IR_MAX_PULSES) {
-        ir_rx.pulses[ir_rx.pulse_count].duration_us = duration_us;
-        ir_rx.pulses[ir_rx.pulse_count].is_mark = (pin_state == 0);  // TSOP active LOW
-        ir_rx.pulse_count++;
-        
-        // Debug log mỗi 10 pulses
-        if (ir_rx.pulse_count % 10 == 0) {
-            LOG_DBG("Pulse %d: %d us (%s)", 
-                    ir_rx.pulse_count, 
-                    duration_us, 
-                    pin_state == 0 ? "MARK" : "SPACE");
-        }
-    } else {
-        // Buffer full - force stop
-        LOG_WRN("⚠️  Pulse buffer full! Stopping RX");
-        ir_rx.is_receiving = false;
-        ir_convert_pulses_to_bytes();
-        return;
-    }
-    
-    ir_rx.last_edge_cycles = now_cycles;
-}
-
 // ⭐ IMPROVED: Universal pulse to bytes conversion (không check header)
 static void ir_convert_pulses_to_bytes(void) {
     k_mutex_lock(&ir_rx_mutex, K_FOREVER);
