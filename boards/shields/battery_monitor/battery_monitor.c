@@ -821,13 +821,7 @@ struct ir_status {
     uint16_t bits_sent;   // Số bit đã gửi
 };
 
-// IR Command Database - Lưu các IR codes với ID
-struct ir_command {
-    uint16_t cmd_id;             // Command ID (0-65535)
-    uint16_t data_len;           // Độ dài IR data
-    uint8_t data[MAX_IR_DATA_LEN]; // Raw IR data
-    char description[32];        // Mô tả: "Cool 24C", "Power Off", etc.
-};
+
 
 // Auto Rule - Nếu temp trong khoảng [temp_min, temp_max) thì gửi cmd_id
 struct ir_auto_rule {
