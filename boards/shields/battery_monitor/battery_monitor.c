@@ -336,6 +336,415 @@ static void start_auto_updates(void);
 #define IR_TOLERANCE_US   200     // ±200us tolerance
 
 
+
+// IR Protocol types
+typedef enum {
+    IR_PROTOCOL_UNKNOWN = 0,
+    IR_PROTOCOL_NEC,
+    IR_PROTOCOL_NEC_EXTENDED,
+    IR_PROTOCOL_RC5,
+    IR_PROTOCOL_RC6,
+    IR_PROTOCOL_SONY_SIRC_12,
+    IR_PROTOCOL_SONY_SIRC_15,
+    IR_PROTOCOL_SONY_SIRC_20,
+    IR_PROTOCOL_SAMSUNG,
+    IR_PROTOCOL_PANASONIC_AC,      // ⭐ Panasonic AC (216 bits)
+    IR_PROTOCOL_MITSUBISHI_AC,     // ⭐ Mitsubishi Heavy (216 bits)
+    IR_PROTOCOL_MITSUBISHI_AC112,  // ⭐ Mitsubishi Electric (112 bits)
+    IR_PROTOCOL_MITSUBISHI_AC136,  // ⭐ Mitsubishi Electric (136 bits)
+    IR_PROTOCOL_MITSUBISHI_AC144,  // ⭐ Mitsubishi MSZ (144 bits)
+    IR_PROTOCOL_RAW                // Fallback
+} ir_protocol_t;
+
+// Protocol timing constants (microseconds)
+#define TIMING_TOLERANCE    200   // ±200us tolerance
+
+// NEC (TV, generic remotes)
+#define NEC_HEADER_MARK     9000
+#define NEC_HEADER_SPACE    4500
+#define NEC_BIT_MARK        560
+#define NEC_ONE_SPACE       1690
+#define NEC_ZERO_SPACE      560
+
+// RC5 (Philips, Manchester encoding)
+#define RC5_BIT_TIME        889
+
+// RC6 (Philips)
+#define RC6_HEADER_MARK     2666
+#define RC6_HEADER_SPACE    889
+#define RC6_BIT_MARK        444
+
+// Sony SIRC
+#define SONY_HEADER_MARK    2400
+#define SONY_BIT_MARK       600
+#define SONY_ONE_SPACE      1200
+#define SONY_ZERO_SPACE     600
+
+// Samsung (NEC-like but 32-bit)
+#define SAMSUNG_HEADER_MARK  4500
+#define SAMSUNG_HEADER_SPACE 4500
+#define SAMSUNG_BIT_MARK     560
+#define SAMSUNG_ONE_SPACE    1690
+#define SAMSUNG_ZERO_SPACE   560
+
+// ⭐ Panasonic AC (48-bit address + 216-bit data)
+// Total: 264 bits (33 bytes)
+#define PANASONIC_AC_HDR_MARK    3500
+#define PANASONIC_AC_HDR_SPACE   1750
+#define PANASONIC_AC_BIT_MARK    435
+#define PANASONIC_AC_ONE_SPACE   1300
+#define PANASONIC_AC_ZERO_SPACE  435
+#define PANASONIC_AC_BITS        216    // Data bits (excluding 48-bit address)
+#define PANASONIC_AC_TOTAL_BITS  264    // Including address
+
+// ⭐ Mitsubishi Heavy Industries AC (216 bits)
+#define MITSUBISHI_AC_HEADER_MARK   3200
+#define MITSUBISHI_AC_HEADER_SPACE  1600
+#define MITSUBISHI_AC_BIT_MARK      400
+#define MITSUBISHI_AC_ONE_SPACE     1200
+#define MITSUBISHI_AC_ZERO_SPACE    400
+#define MITSUBISHI_AC_BITS          216
+
+// ⭐ Mitsubishi Electric AC (112/136/144 bits)
+#define MITSUBISHI_E_HEADER_MARK    3400
+#define MITSUBISHI_E_HEADER_SPACE   1750
+#define MITSUBISHI_E_BIT_MARK       450
+#define MITSUBISHI_E_ONE_SPACE      1300
+#define MITSUBISHI_E_ZERO_SPACE     420
+
+
+
+
+// IR decoded data
+struct ir_decoded_data {
+    ir_protocol_t protocol;
+    uint32_t address;          // Device address (cho NEC, Samsung, etc.)
+    uint32_t command;          // Command code
+    uint8_t data[36];          // ⭐ Extended data cho AC (max 264 bits = 33 bytes + padding)
+    uint8_t bits;              // Total bits
+} __packed;
+
+// Compressed pulse structure (cho RAW protocol)
+struct ir_pulse_compressed {
+    uint16_t data;  // Bit 15=is_mark, Bit 0-14=duration_us
+} __packed;
+
+#define PULSE_IS_MARK(p) ((p).data & 0x8000)
+#define PULSE_DURATION(p) ((p).data & 0x7FFF)
+#define MAKE_PULSE(dur, mark) (((dur) & 0x7FFF) | ((mark) ? 0x8000 : 0))
+
+// IR Command - Support cả decoded và raw
+struct ir_command {
+    uint16_t cmd_id;
+    ir_protocol_t protocol;
+    char description[32];
+    
+    union {
+        // Decoded data (~70 bytes cho AC protocols)
+        struct ir_decoded_data decoded;
+        
+        // Raw pulse data (~1KB cho unknown protocols)
+        struct {
+            uint16_t pulse_count;
+            struct ir_pulse_compressed pulses[512];
+        } raw;
+    };
+} __packed;
+
+#define MAX_IR_COMMANDS 200  // Hầu hết sẽ là decoded
+
+
+// Check if duration matches expected value (with tolerance)
+static inline bool match_mark(uint32_t duration, uint32_t expected) {
+    return (duration > (expected - TIMING_TOLERANCE)) && 
+           (duration < (expected + TIMING_TOLERANCE));
+}
+
+static inline bool match_space(uint32_t duration, uint32_t expected) {
+    return match_mark(duration, expected);
+}
+
+// Decode bit from mark+space pair
+static inline int decode_bit_pulse(uint32_t mark, uint32_t space, 
+                                   uint32_t expected_mark,
+                                   uint32_t one_space, uint32_t zero_space) {
+    if (!match_mark(mark, expected_mark)) return -1;
+    
+    if (match_space(space, one_space)) return 1;
+    if (match_space(space, zero_space)) return 0;
+    return -1;
+}
+
+
+// ⭐ Detect NEC protocol
+static bool try_decode_nec(struct ir_decoded_data *out) {
+    if (ir_rx.pulse_count < 67) return false;
+    
+    if (!match_mark(ir_rx.pulses[0].duration_us, NEC_HEADER_MARK)) return false;
+    if (!match_space(ir_rx.pulses[1].duration_us, NEC_HEADER_SPACE)) return false;
+    
+    uint32_t data = 0;
+    int bit_count = 0;
+    
+    for (int i = 2; i < ir_rx.pulse_count - 1 && bit_count < 32; i += 2) {
+        int bit = decode_bit_pulse(
+            ir_rx.pulses[i].duration_us,
+            ir_rx.pulses[i + 1].duration_us,
+            NEC_BIT_MARK, NEC_ONE_SPACE, NEC_ZERO_SPACE
+        );
+        
+        if (bit < 0) return false;
+        data |= (bit << bit_count);
+        bit_count++;
+    }
+    
+    if (bit_count != 32) return false;
+    
+    uint8_t addr = data & 0xFF;
+    uint8_t addr_inv = (data >> 8) & 0xFF;
+    uint8_t cmd = (data >> 16) & 0xFF;
+    
+    if ((addr ^ addr_inv) == 0xFF) {
+        out->protocol = IR_PROTOCOL_NEC;
+        out->address = addr;
+    } else {
+        out->protocol = IR_PROTOCOL_NEC_EXTENDED;
+        out->address = data & 0xFFFF;
+    }
+    
+    out->command = cmd;
+    out->bits = 32;
+    
+    LOG_INF("✅ NEC: addr=0x%04X, cmd=0x%02X", out->address, out->command);
+    return true;
+}
+
+// ⭐ Detect Samsung protocol
+static bool try_decode_samsung(struct ir_decoded_data *out) {
+    if (ir_rx.pulse_count < 67) return false;
+    
+    if (!match_mark(ir_rx.pulses[0].duration_us, SAMSUNG_HEADER_MARK)) return false;
+    if (!match_space(ir_rx.pulses[1].duration_us, SAMSUNG_HEADER_SPACE)) return false;
+    
+    uint32_t data = 0;
+    int bit_count = 0;
+    
+    for (int i = 2; i < ir_rx.pulse_count - 1 && bit_count < 32; i += 2) {
+        int bit = decode_bit_pulse(
+            ir_rx.pulses[i].duration_us,
+            ir_rx.pulses[i + 1].duration_us,
+            SAMSUNG_BIT_MARK, SAMSUNG_ONE_SPACE, SAMSUNG_ZERO_SPACE
+        );
+        
+        if (bit < 0) return false;
+        data |= (bit << bit_count);
+        bit_count++;
+    }
+    
+    if (bit_count != 32) return false;
+    
+    out->protocol = IR_PROTOCOL_SAMSUNG;
+    out->address = data & 0xFF;
+    out->command = (data >> 8) & 0xFF;
+    out->bits = 32;
+    
+    LOG_INF("✅ Samsung: addr=0x%02X, cmd=0x%02X", out->address, out->command);
+    return true;
+}
+
+// ⭐ Detect Sony SIRC protocol
+static bool try_decode_sony(struct ir_decoded_data *out) {
+    if (ir_rx.pulse_count < 25) return false;
+    
+    if (!match_mark(ir_rx.pulses[0].duration_us, SONY_HEADER_MARK)) return false;
+    
+    uint32_t data = 0;
+    int bit_count = 0;
+    
+    for (int i = 1; i < ir_rx.pulse_count && bit_count < 20; i += 2) {
+        if (i + 1 >= ir_rx.pulse_count) break;
+        
+        int bit = decode_bit_pulse(
+            ir_rx.pulses[i].duration_us,
+            ir_rx.pulses[i + 1].duration_us,
+            SONY_BIT_MARK, SONY_ONE_SPACE, SONY_ZERO_SPACE
+        );
+        
+        if (bit < 0) break;
+        data |= (bit << bit_count);
+        bit_count++;
+    }
+    
+    if (bit_count == 12) {
+        out->protocol = IR_PROTOCOL_SONY_SIRC_12;
+        out->command = data & 0x7F;
+        out->address = (data >> 7) & 0x1F;
+    } else if (bit_count == 15) {
+        out->protocol = IR_PROTOCOL_SONY_SIRC_15;
+        out->command = data & 0x7F;
+        out->address = (data >> 7) & 0xFF;
+    } else if (bit_count == 20) {
+        out->protocol = IR_PROTOCOL_SONY_SIRC_20;
+        out->command = data & 0x7F;
+        out->address = (data >> 7) & 0x1FFF;
+    } else {
+        return false;
+    }
+    
+    out->bits = bit_count;
+    LOG_INF("✅ Sony SIRC-%d: addr=0x%X, cmd=0x%X", 
+            bit_count, out->address, out->command);
+    return true;
+}
+
+// ⭐ Detect Panasonic AC (216 bits data + 48 bits address = 264 bits total)
+static bool try_decode_panasonic_ac(struct ir_decoded_data *out) {
+    // Panasonic AC: 1 header + 264 bits = 529 pulses minimum
+    if (ir_rx.pulse_count < 529) return false;
+    
+    // Check header
+    if (!match_mark(ir_rx.pulses[0].duration_us, PANASONIC_AC_HDR_MARK)) return false;
+    if (!match_space(ir_rx.pulses[1].duration_us, PANASONIC_AC_HDR_SPACE)) return false;
+    
+    uint8_t data[33] = {0};  // 264 bits = 33 bytes
+    int bit_count = 0;
+    
+    // Decode 264 bits (48-bit address + 216-bit data)
+    for (int i = 2; i < ir_rx.pulse_count - 1 && bit_count < PANASONIC_AC_TOTAL_BITS; i += 2) {
+        int bit = decode_bit_pulse(
+            ir_rx.pulses[i].duration_us,
+            ir_rx.pulses[i + 1].duration_us,
+            PANASONIC_AC_BIT_MARK,
+            PANASONIC_AC_ONE_SPACE,
+            PANASONIC_AC_ZERO_SPACE
+        );
+        
+        if (bit < 0) return false;
+        
+        if (bit) {
+            data[bit_count / 8] |= (1 << (bit_count % 8));
+        }
+        bit_count++;
+    }
+    
+    if (bit_count < 216) return false;  // At minimum need data bits
+    
+    // Extract 48-bit address (first 6 bytes)
+    uint64_t address = 0;
+    for (int i = 0; i < 6; i++) {
+        address |= ((uint64_t)data[i] << (i * 8));
+    }
+    
+    // Panasonic AC signature: 0x4004 in first 16 bits
+    if ((address & 0xFFFF) != 0x4004 && (address & 0xFFFF) != 0x0240) {
+        return false;  // Not Panasonic AC
+    }
+    
+    out->protocol = IR_PROTOCOL_PANASONIC_AC;
+    out->address = address & 0xFFFFFFFF;  // Store lower 32 bits
+    out->bits = bit_count;
+    memcpy(out->data, data, 33);
+    
+    LOG_INF("✅ Panasonic AC detected: %d bits", bit_count);
+    LOG_INF("   Address: 0x%08X", out->address);
+    LOG_HEXDUMP_INF(data, 33, "Panasonic AC data");
+    return true;
+}
+
+// ⭐ Detect Mitsubishi Heavy Industries AC (216 bits)
+static bool try_decode_mitsubishi_ac(struct ir_decoded_data *out) {
+    if (ir_rx.pulse_count < 435) return false;  // 1 header + 216 bits
+    
+    if (!match_mark(ir_rx.pulses[0].duration_us, MITSUBISHI_AC_HEADER_MARK)) return false;
+    if (!match_space(ir_rx.pulses[1].duration_us, MITSUBISHI_AC_HEADER_SPACE)) return false;
+    
+    uint8_t data[27] = {0};  // 216 bits = 27 bytes
+    int bit_count = 0;
+    
+    for (int i = 2; i < ir_rx.pulse_count - 1 && bit_count < 216; i += 2) {
+        int bit = decode_bit_pulse(
+            ir_rx.pulses[i].duration_us,
+            ir_rx.pulses[i + 1].duration_us,
+            MITSUBISHI_AC_BIT_MARK,
+            MITSUBISHI_AC_ONE_SPACE,
+            MITSUBISHI_AC_ZERO_SPACE
+        );
+        
+        if (bit < 0) return false;
+        
+        if (bit) {
+            data[bit_count / 8] |= (1 << (bit_count % 8));
+        }
+        bit_count++;
+    }
+    
+    if (bit_count != 216) return false;
+    
+    // Mitsubishi Heavy signature check (byte 0 usually 0x23)
+    if (data[0] != 0x23 && data[0] != 0xC2) {
+        return false;
+    }
+    
+    out->protocol = IR_PROTOCOL_MITSUBISHI_AC;
+    out->bits = 216;
+    memcpy(out->data, data, 27);
+    
+    LOG_INF("✅ Mitsubishi AC (Heavy) detected: 216 bits");
+    LOG_HEXDUMP_INF(data, 27, "Mitsubishi AC data");
+    return true;
+}
+
+// ⭐ Detect Mitsubishi Electric AC (112/136/144 bits)
+static bool try_decode_mitsubishi_electric_ac(struct ir_decoded_data *out) {
+    if (ir_rx.pulse_count < 227) return false;  // Min 112 bits
+    
+    if (!match_mark(ir_rx.pulses[0].duration_us, MITSUBISHI_E_HEADER_MARK)) return false;
+    if (!match_space(ir_rx.pulses[1].duration_us, MITSUBISHI_E_HEADER_SPACE)) return false;
+    
+    uint8_t data[18] = {0};  // Max 144 bits = 18 bytes
+    int bit_count = 0;
+    
+    for (int i = 2; i < ir_rx.pulse_count - 1 && bit_count < 144; i += 2) {
+        int bit = decode_bit_pulse(
+            ir_rx.pulses[i].duration_us,
+            ir_rx.pulses[i + 1].duration_us,
+            MITSUBISHI_E_BIT_MARK,
+            MITSUBISHI_E_ONE_SPACE,
+            MITSUBISHI_E_ZERO_SPACE
+        );
+        
+        if (bit < 0) break;
+        
+        if (bit) {
+            data[bit_count / 8] |= (1 << (bit_count % 8));
+        }
+        bit_count++;
+    }
+    
+    // Mitsubishi Electric signature (byte 0 usually 0x23)
+    if (data[0] != 0x23) {
+        return false;
+    }
+    
+    if (bit_count == 112) {
+        out->protocol = IR_PROTOCOL_MITSUBISHI_AC112;
+    } else if (bit_count == 136) {
+        out->protocol = IR_PROTOCOL_MITSUBISHI_AC136;
+    } else if (bit_count == 144) {
+        out->protocol = IR_PROTOCOL_MITSUBISHI_AC144;
+    } else {
+        return false;
+    }
+    
+    out->bits = bit_count;
+    memcpy(out->data, data, (bit_count + 7) / 8);
+    
+    LOG_INF("✅ Mitsubishi Electric AC-%d detected", bit_count);
+    LOG_HEXDUMP_INF(data, (bit_count + 7) / 8, "Mitsubishi E data");
+    return true;
+}
+
+
 // IR Receiver data structure
 struct ir_pulse {
     uint32_t duration_us;
@@ -484,7 +893,6 @@ static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes);
 static int save_ir_commands(void);
 static int save_ir_auto_rules(void);
 static int save_ir_auto_state(void);
-static void ir_convert_pulses_to_bytes(void);
 static int ir_start_learning(void);
 static inline uint32_t cycles_to_us(uint32_t cycles);
 
@@ -493,20 +901,100 @@ static inline uint32_t cycles_to_us(uint32_t cycles);
 // ============================================================================
 // IR AUTO CONTROL LOGIC (thêm function mới)
 // ============================================================================
+// ⭐ XÓA HOÀN TOÀN ir_convert_pulses_to_bytes()
+// THAY BẰNG HÀM MỚI:
 
+static void ir_detect_and_decode(void) {
+    k_mutex_lock(&ir_rx_mutex, K_FOREVER);
+    
+    if (ir_rx.pulse_count < 10) {
+        LOG_WRN("Too few pulses: %d", ir_rx.pulse_count);
+        k_mutex_unlock(&ir_rx_mutex);
+        return;
+    }
+    
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    LOG_INF("📊 IR DECODE: %d pulses captured", ir_rx.pulse_count);
+    
+    // ⭐ Try decode protocols (theo thứ tự ưu tiên)
+    struct ir_decoded_data decoded;
+    memset(&decoded, 0, sizeof(decoded));
+    bool success = false;
+    
+    // 1. AC protocols (ưu tiên cao nhất)
+    if (!success) success = try_decode_panasonic_ac(&decoded);
+    if (!success) success = try_decode_mitsubishi_ac(&decoded);
+    if (!success) success = try_decode_mitsubishi_electric_ac(&decoded);
+    
+    // 2. Common protocols
+    if (!success) success = try_decode_nec(&decoded);
+    if (!success) success = try_decode_samsung(&decoded);
+    if (!success) success = try_decode_sony(&decoded);
+    
+    // 3. Fallback to RAW
+    if (!success) {
+        LOG_WRN("❌ Unknown protocol - saving as RAW (%d pulses)", ir_rx.pulse_count);
+        
+        // Prepare RAW data
+        decoded.protocol = IR_PROTOCOL_RAW;
+        decoded.bits = ir_rx.pulse_count;
+        
+        // Will be handled separately in save command
+    }
+    
+    // ⭐ Save to temporary storage
+    k_mutex_lock(&ir_mutex, K_FOREVER);
+    
+    if (decoded.protocol == IR_PROTOCOL_RAW) {
+        // Save RAW pulses
+        ir_data.data_len = ir_rx.pulse_count * sizeof(struct ir_pulse_compressed);
+        
+        for (int i = 0; i < ir_rx.pulse_count && i < IR_MAX_PULSES; i++) {
+            struct ir_pulse_compressed *p = (struct ir_pulse_compressed *)&ir_data.data[i * 2];
+            p->data = MAKE_PULSE(ir_rx.pulses[i].duration_us, ir_rx.pulses[i].is_mark);
+        }
+    } else {
+        // Save decoded data
+        ir_data.data_len = sizeof(struct ir_decoded_data);
+        memcpy(ir_data.data, &decoded, sizeof(decoded));
+    }
+    
+    k_mutex_unlock(&ir_mutex);
+    
+    LOG_INF("✅ IR data ready for save");
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
+    // Notify app
+    uint8_t notify_data[4] = {
+        0x02,  // New IR received
+        (ir_data.data_len >> 8) & 0xFF,
+        ir_data.data_len & 0xFF,
+        decoded.protocol
+    };
+    
+    k_mutex_lock(&conn_mutex, K_FOREVER);
+    for (int i = 0; i < MAX_CONNECTIONS; i++) {
+        if (active_conns[i]) {
+            bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[26],
+                          notify_data, sizeof(notify_data));
+        }
+    }
+    k_mutex_unlock(&conn_mutex);
+    
+    k_mutex_unlock(&ir_rx_mutex);
+}
 
 // THÊM VÀO ĐẦU FILE (sau các define)
 static struct k_work_delayable ir_rx_timeout_work;
 
-// Timeout handler
 static void ir_rx_timeout_handler(struct k_work *work) {
     if (!ir_rx.is_receiving) return;
     
     LOG_INF("📥 IR RX complete: %d pulses (timeout)", ir_rx.pulse_count);
     ir_rx.is_receiving = false;
     
-    // Convert to bytes
-    ir_convert_pulses_to_bytes();
+    // ⭐ Decode protocol
+    ir_detect_and_decode();
 }
 
 // SỬA LẠI ir_rx_interrupt():
@@ -608,34 +1096,28 @@ static void check_ir_auto_control(void) {
                 continue;  // Too soon
             }
             
-            // Tìm command tương ứng
+            // Trong check_ir_auto_control():
             struct ir_command *cmd = find_ir_command(rule->cmd_id);
             if (cmd == NULL) {
                 LOG_WRN("Rule %d: Command ID %u not found", i, rule->cmd_id);
                 continue;
             }
-            
-            if (cmd->data_len == 0) {
-                LOG_WRN("Rule %d: Command ID %u is empty", i, rule->cmd_id);
-                continue;
-            }
-            
+
             LOG_INF("❄️ Auto Rule %d matched:", i);
             LOG_INF("   Temp %d.%02d°C in range [%d.%02d, %d.%02d)", 
                     temp_internal / 100, abs(temp_internal % 100),
                     rule->temp_min / 100, abs(rule->temp_min % 100),
                     rule->temp_max / 100, abs(rule->temp_max % 100));
-            LOG_INF("   Sending Command %u: %s", cmd->cmd_id, cmd->description);
-            
-            // Gửi IR command
-            int ret = ir_send_raw_data(cmd->data, cmd->data_len);
-            
+            LOG_INF("   Sending Command %u: %s (protocol %d)", 
+                    cmd->cmd_id, cmd->description, cmd->protocol);
+
+            // ⭐ Send command (auto-detect decoded or raw)
+            int ret = ir_send_command(cmd);
+
             if (ret == 0) {
                 rule->last_sent_time = now;
                 ir_auto_state.last_matched_rule = i;
                 LOG_INF("✅ Auto IR sent successfully");
-                
-                // Chỉ gửi 1 rule đầu tiên match, break
                 break;
             } else {
                 LOG_ERR("❌ Auto IR failed: %d", ret);
@@ -1044,7 +1526,6 @@ static ssize_t write_ir_learning(struct bt_conn *conn, const struct bt_gatt_attr
                 return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
             }
             
-            // Save to command database
             k_mutex_lock(&ir_mutex, K_FOREVER);
             
             struct ir_command *cmd_ptr = find_ir_command(cmd_id);
@@ -1056,19 +1537,28 @@ static ssize_t write_ir_learning(struct bt_conn *conn, const struct bt_gatt_attr
                 cmd_ptr = &ir_commands[ir_cmd_count++];
             }
             
+            // ⭐ Copy decoded or raw data
+            if (ir_data.data_len == sizeof(struct ir_decoded_data)) {
+                // Decoded protocol
+                memcpy(&cmd_ptr->decoded, ir_data.data, sizeof(struct ir_decoded_data));
+                cmd_ptr->protocol = cmd_ptr->decoded.protocol;
+            } else {
+                // RAW pulses
+                cmd_ptr->protocol = IR_PROTOCOL_RAW;
+                cmd_ptr->raw.pulse_count = ir_data.data_len / sizeof(struct ir_pulse_compressed);
+                memcpy(cmd_ptr->raw.pulses, ir_data.data, ir_data.data_len);
+            }
+            
             cmd_ptr->cmd_id = cmd_id;
-            cmd_ptr->data_len = ir_data.data_len;
-            memcpy(cmd_ptr->data, ir_data.data, ir_data.data_len);
             memcpy(cmd_ptr->description, &data[4], desc_len);
             cmd_ptr->description[desc_len] = '\0';
             
             save_ir_commands();
-            
             k_mutex_unlock(&ir_mutex);
             
-            LOG_INF("💾 Learned IR saved as Command %u: '%s'", cmd_id, cmd_ptr->description);
-            break;
-            
+            LOG_INF("💾 Learned IR saved as Command %u: '%s' (protocol %d)", 
+                    cmd_id, cmd_ptr->description, cmd_ptr->protocol);
+            break;  
         default:
             return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
     }
@@ -1279,6 +1769,155 @@ static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *
     k_mutex_unlock(&conn_mutex);
     
     return len;
+}
+
+
+// ⭐ Send decoded protocol
+static int ir_send_decoded(const struct ir_decoded_data *decoded) {
+    LOG_INF("📡 Sending decoded protocol %d", decoded->protocol);
+    
+    k_mutex_lock(&ir_mutex, K_FOREVER);
+    
+    if (ir_data.is_transmitting) {
+        k_mutex_unlock(&ir_mutex);
+        return -EBUSY;
+    }
+    
+    ir_data.is_transmitting = true;
+    
+    // Send based on protocol
+    switch (decoded->protocol) {
+        case IR_PROTOCOL_PANASONIC_AC:
+        case IR_PROTOCOL_MITSUBISHI_AC:
+        case IR_PROTOCOL_MITSUBISHI_AC112:
+        case IR_PROTOCOL_MITSUBISHI_AC136:
+        case IR_PROTOCOL_MITSUBISHI_AC144: {
+            // Get timing based on protocol
+            uint32_t hdr_mark, hdr_space, bit_mark, one_space, zero_space;
+            
+            if (decoded->protocol == IR_PROTOCOL_PANASONIC_AC) {
+                hdr_mark = PANASONIC_AC_HDR_MARK;
+                hdr_space = PANASONIC_AC_HDR_SPACE;
+                bit_mark = PANASONIC_AC_BIT_MARK;
+                one_space = PANASONIC_AC_ONE_SPACE;
+                zero_space = PANASONIC_AC_ZERO_SPACE;
+            } else if (decoded->protocol == IR_PROTOCOL_MITSUBISHI_AC) {
+                hdr_mark = MITSUBISHI_AC_HEADER_MARK;
+                hdr_space = MITSUBISHI_AC_HEADER_SPACE;
+                bit_mark = MITSUBISHI_AC_BIT_MARK;
+                one_space = MITSUBISHI_AC_ONE_SPACE;
+                zero_space = MITSUBISHI_AC_ZERO_SPACE;
+            } else {
+                hdr_mark = MITSUBISHI_E_HEADER_MARK;
+                hdr_space = MITSUBISHI_E_HEADER_SPACE;
+                bit_mark = MITSUBISHI_E_BIT_MARK;
+                one_space = MITSUBISHI_E_ONE_SPACE;
+                zero_space = MITSUBISHI_E_ZERO_SPACE;
+            }
+            
+            // Send header
+            ir_carrier_on(hdr_mark);
+            ir_carrier_off(hdr_space);
+            
+            // Send data bits
+            for (int i = 0; i < decoded->bits; i++) {
+                uint8_t byte_idx = i / 8;
+                uint8_t bit_idx = i % 8;
+                bool bit = (decoded->data[byte_idx] >> bit_idx) & 1;
+                
+                ir_carrier_on(bit_mark);
+                ir_carrier_off(bit ? one_space : zero_space);
+            }
+            
+            // Stop bit
+            ir_carrier_on(bit_mark);
+            break;
+        }
+        
+        case IR_PROTOCOL_NEC:
+        case IR_PROTOCOL_NEC_EXTENDED: {
+            // Send NEC header
+            ir_carrier_on(NEC_HEADER_MARK);
+            ir_carrier_off(NEC_HEADER_SPACE);
+            
+            // Reconstruct 32-bit data
+            uint32_t data = decoded->address | (decoded->command << 16) | 
+                           ((~decoded->command & 0xFF) << 24);
+            
+            // Send 32 bits
+            for (int i = 0; i < 32; i++) {
+                bool bit = (data >> i) & 1;
+                ir_carrier_on(NEC_BIT_MARK);
+                ir_carrier_off(bit ? NEC_ONE_SPACE : NEC_ZERO_SPACE);
+            }
+            
+            // Stop bit
+            ir_carrier_on(NEC_BIT_MARK);
+            break;
+        }
+        
+        // Add other protocols...
+        
+        default:
+            LOG_ERR("Unknown decoded protocol: %d", decoded->protocol);
+            ir_data.is_transmitting = false;
+            k_mutex_unlock(&ir_mutex);
+            return -EINVAL;
+    }
+    
+    ir_data.is_transmitting = false;
+    ir_status.last_result = 0;
+    
+    LOG_INF("✅ Decoded IR sent");
+    
+    k_mutex_unlock(&ir_mutex);
+    return 0;
+}
+
+// ⭐ Send raw pulses
+static int ir_send_raw_pulses(const struct ir_pulse_compressed *pulses, uint16_t pulse_count) {
+    if (pulse_count == 0 || pulse_count > IR_MAX_PULSES) {
+        return -EINVAL;
+    }
+    
+    k_mutex_lock(&ir_mutex, K_FOREVER);
+    
+    if (ir_data.is_transmitting) {
+        k_mutex_unlock(&ir_mutex);
+        return -EBUSY;
+    }
+    
+    ir_data.is_transmitting = true;
+    
+    LOG_INF("📡 Sending RAW: %d pulses", pulse_count);
+    
+    for (uint16_t i = 0; i < pulse_count; i++) {
+        uint16_t duration = PULSE_DURATION(pulses[i]);
+        bool is_mark = PULSE_IS_MARK(pulses[i]);
+        
+        if (is_mark) {
+            ir_carrier_on(duration);
+        } else {
+            ir_carrier_off(duration);
+        }
+    }
+    
+    ir_data.is_transmitting = false;
+    ir_status.last_result = 0;
+    
+    LOG_INF("✅ RAW IR sent");
+    
+    k_mutex_unlock(&ir_mutex);
+    return 0;
+}
+
+// ⭐ Unified send function
+static int ir_send_command(const struct ir_command *cmd) {
+    if (cmd->protocol == IR_PROTOCOL_RAW) {
+        return ir_send_raw_pulses(cmd->raw.pulses, cmd->raw.pulse_count);
+    } else {
+        return ir_send_decoded(&cmd->decoded);
+    }
 }
 
 // ============================================================================
