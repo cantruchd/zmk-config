@@ -1045,12 +1045,7 @@ static void ir_rx_interrupt(const struct device *dev,
     }
     
     ir_rx.last_edge_cycles = now_cycles;
-}  ir_rx.last_edge_cycles = now_cycles;
-
-
-
-
-
+}
 
 
 // Helper: Convert CPU cycles to microseconds
