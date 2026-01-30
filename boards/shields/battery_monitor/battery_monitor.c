@@ -35,47 +35,6 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // ============================================================================
 
 
-
-// IR Configuration
-#define IR_TX_PIN   20  // P0.20 (D3) - IR LED
-#define IR_RX_PIN   11  // P0.11 (D7) - IR Receiver
-#define IR_CARRIER_FREQ 38000  // 38kHz carrier
-
-// IR Timing (microseconds) - NEC Protocol
-#define IR_MARK_TIME   560   // Mark pulse
-#define IR_SPACE_TIME  560   // Space for bit 0
-#define IR_ONE_SPACE   1690  // Space for bit 1
-#define IR_HEADER_MARK 9000  // Header mark
-#define IR_HEADER_SPACE 4500 // Header space
-
-// IR RX Configuration
-#define IR_RX_TIMEOUT_US  100000  // 100ms timeout
-#define IR_MAX_PULSES     256     // Max pulses to capture
-#define IR_TOLERANCE_US   200     // ±200us tolerance
-
-
-// IR Receiver data structure
-struct ir_pulse {
-    uint32_t duration_us;
-    bool is_mark;  // true = mark (carrier on), false = space
-};
-
-struct ir_rx_data {
-    struct ir_pulse pulses[IR_MAX_PULSES];
-    uint16_t pulse_count;
-    bool is_receiving;
-    int64_t last_edge_time;
-};
-
-static struct ir_rx_data ir_rx = {
-    .pulse_count = 0,
-    .is_receiving = false
-};
-
-static struct gpio_callback ir_rx_cb_data;
-static K_MUTEX_DEFINE(ir_rx_mutex);
-
-
 #define MOSFET_PIN  24
 
 // NTC
