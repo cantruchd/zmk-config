@@ -3192,7 +3192,7 @@ static int battery_monitor_init(void) {
 
  
     // Configure IR LED
-    ret = gpio_pin_configure(gpio_dev, IR_LED_PIN, GPIO_OUTPUT_INACTIVE);
+    ret = gpio_pin_configure(gpio_dev, IR_TX_PIN, GPIO_OUTPUT_INACTIVE);
     if (ret < 0) {
         LOG_ERR("Failed to configure IR LED: %d", ret);
         return ret;
