@@ -1206,175 +1206,175 @@ static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes) {
 
 
 
-// ⭐ IMPROVED: Universal pulse to bytes conversion (không check header)
-static void ir_convert_pulses_to_bytes(void) {
-    k_mutex_lock(&ir_rx_mutex, K_FOREVER);
+// // ⭐ IMPROVED: Universal pulse to bytes conversion (không check header)
+// static void ir_convert_pulses_to_bytes(void) {
+//     k_mutex_lock(&ir_rx_mutex, K_FOREVER);
     
-    if (ir_rx.pulse_count < 10) {
-        LOG_WRN("Too few pulses: %d", ir_rx.pulse_count);
-        k_mutex_unlock(&ir_rx_mutex);
-        return;
-    }
+//     if (ir_rx.pulse_count < 10) {
+//         LOG_WRN("Too few pulses: %d", ir_rx.pulse_count);
+//         k_mutex_unlock(&ir_rx_mutex);
+//         return;
+//     }
     
-    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    LOG_INF("📊 IR DECODE: %d pulses captured", ir_rx.pulse_count);
+//     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+//     LOG_INF("📊 IR DECODE: %d pulses captured", ir_rx.pulse_count);
     
-    // Log first 20 pulses
-    for (int i = 0; i < MIN(20, ir_rx.pulse_count); i++) {
-        LOG_INF("  [%d]: %4d us %s", 
-                i, 
-                ir_rx.pulses[i].duration_us,
-                ir_rx.pulses[i].is_mark ? "MARK" : "SPACE");
-    }
+//     // Log first 20 pulses
+//     for (int i = 0; i < MIN(20, ir_rx.pulse_count); i++) {
+//         LOG_INF("  [%d]: %4d us %s", 
+//                 i, 
+//                 ir_rx.pulses[i].duration_us,
+//                 ir_rx.pulses[i].is_mark ? "MARK" : "SPACE");
+//     }
     
-    // ⭐ PHASE 1: Tìm MARK pulses và tính threshold
-    uint32_t mark_durations[256];
-    uint16_t mark_count = 0;
-    uint32_t total_mark = 0;
+//     // ⭐ PHASE 1: Tìm MARK pulses và tính threshold
+//     uint32_t mark_durations[256];
+//     uint16_t mark_count = 0;
+//     uint32_t total_mark = 0;
     
-    for (int i = 0; i < ir_rx.pulse_count && mark_count < 256; i++) {
-        if (ir_rx.pulses[i].is_mark) {
-            mark_durations[mark_count++] = ir_rx.pulses[i].duration_us;
-            total_mark += ir_rx.pulses[i].duration_us;
-        }
-    }
+//     for (int i = 0; i < ir_rx.pulse_count && mark_count < 256; i++) {
+//         if (ir_rx.pulses[i].is_mark) {
+//             mark_durations[mark_count++] = ir_rx.pulses[i].duration_us;
+//             total_mark += ir_rx.pulses[i].duration_us;
+//         }
+//     }
     
-    if (mark_count < 4) {
-        LOG_WRN("Not enough MARK pulses: %d", mark_count);
-        k_mutex_unlock(&ir_rx_mutex);
-        return;
-    }
+//     if (mark_count < 4) {
+//         LOG_WRN("Not enough MARK pulses: %d", mark_count);
+//         k_mutex_unlock(&ir_rx_mutex);
+//         return;
+//     }
     
-    uint32_t avg_mark = total_mark / mark_count;
+//     uint32_t avg_mark = total_mark / mark_count;
     
-    // Tìm min/max MARK duration
-    uint32_t min_mark = 10000, max_mark = 0;
-    for (int i = 0; i < mark_count; i++) {
-        if (mark_durations[i] < min_mark) min_mark = mark_durations[i];
-        if (mark_durations[i] > max_mark) max_mark = mark_durations[i];
-    }
+//     // Tìm min/max MARK duration
+//     uint32_t min_mark = 10000, max_mark = 0;
+//     for (int i = 0; i < mark_count; i++) {
+//         if (mark_durations[i] < min_mark) min_mark = mark_durations[i];
+//         if (mark_durations[i] > max_mark) max_mark = mark_durations[i];
+//     }
     
-    // Threshold = giữa short và long pulse
-    uint32_t threshold = (min_mark + max_mark) / 2;
+//     // Threshold = giữa short và long pulse
+//     uint32_t threshold = (min_mark + max_mark) / 2;
     
-    LOG_INF("📊 MARK Analysis:");
-    LOG_INF("   Count: %d pulses", mark_count);
-    LOG_INF("   Min: %d us (bit 0)", min_mark);
-    LOG_INF("   Max: %d us (bit 1)", max_mark);
-    LOG_INF("   Avg: %d us", avg_mark);
-    LOG_INF("   Threshold: %d us", threshold);
+//     LOG_INF("📊 MARK Analysis:");
+//     LOG_INF("   Count: %d pulses", mark_count);
+//     LOG_INF("   Min: %d us (bit 0)", min_mark);
+//     LOG_INF("   Max: %d us (bit 1)", max_mark);
+//     LOG_INF("   Avg: %d us", avg_mark);
+//     LOG_INF("   Threshold: %d us", threshold);
     
-    // ⭐ PHASE 2: Decode bits từ MARK pulses
-    uint8_t decoded_data[MAX_IR_DATA_LEN] = {0};
-    uint16_t byte_count = 0;
-    uint8_t current_byte = 0;
-    uint8_t bit_index = 0;
-    uint8_t decoded_bits = 0;
+//     // ⭐ PHASE 2: Decode bits từ MARK pulses
+//     uint8_t decoded_data[MAX_IR_DATA_LEN] = {0};
+//     uint16_t byte_count = 0;
+//     uint8_t current_byte = 0;
+//     uint8_t bit_index = 0;
+//     uint8_t decoded_bits = 0;
     
-    // Skip first 2 pulses (header)
-    int start_idx = 0;
+//     // Skip first 2 pulses (header)
+//     int start_idx = 0;
     
-    // Tìm pulse đầu tiên > 2000us (header)
-    for (int i = 0; i < MIN(10, ir_rx.pulse_count); i++) {
-        if (ir_rx.pulses[i].duration_us > 2000) {
-            start_idx = i + 1; // Skip header
-            LOG_INF("✅ Header found at pulse %d (%d us)", 
-                    i, ir_rx.pulses[i].duration_us);
-            break;
-        }
-    }
+//     // Tìm pulse đầu tiên > 2000us (header)
+//     for (int i = 0; i < MIN(10, ir_rx.pulse_count); i++) {
+//         if (ir_rx.pulses[i].duration_us > 2000) {
+//             start_idx = i + 1; // Skip header
+//             LOG_INF("✅ Header found at pulse %d (%d us)", 
+//                     i, ir_rx.pulses[i].duration_us);
+//             break;
+//         }
+//     }
     
-    LOG_INF("🔍 Decoding bits from pulse %d:", start_idx);
+//     LOG_INF("🔍 Decoding bits from pulse %d:", start_idx);
     
-    for (int i = start_idx; i < ir_rx.pulse_count; i++) {
-        // Chỉ decode MARK pulses
-        if (!ir_rx.pulses[i].is_mark) continue;
+//     for (int i = start_idx; i < ir_rx.pulse_count; i++) {
+//         // Chỉ decode MARK pulses
+//         if (!ir_rx.pulses[i].is_mark) continue;
         
-        uint32_t duration = ir_rx.pulses[i].duration_us;
+//         uint32_t duration = ir_rx.pulses[i].duration_us;
         
-        // Skip very long/short pulses (noise)
-        if (duration < 200 || duration > 2000) continue;
+//         // Skip very long/short pulses (noise)
+//         if (duration < 200 || duration > 2000) continue;
         
-        bool bit_value = (duration > threshold);
+//         bool bit_value = (duration > threshold);
         
-        if (bit_value) {
-            current_byte |= (1 << bit_index);
-        }
+//         if (bit_value) {
+//             current_byte |= (1 << bit_index);
+//         }
         
-        // Log first 32 bits
-        if (decoded_bits < 32) {
-            LOG_INF("  Bit[%2d]: %d (%4d us)", 
-                    decoded_bits, bit_value ? 1 : 0, duration);
-        }
+//         // Log first 32 bits
+//         if (decoded_bits < 32) {
+//             LOG_INF("  Bit[%2d]: %d (%4d us)", 
+//                     decoded_bits, bit_value ? 1 : 0, duration);
+//         }
         
-        bit_index++;
-        decoded_bits++;
+//         bit_index++;
+//         decoded_bits++;
         
-        if (bit_index == 8) {
-            decoded_data[byte_count++] = current_byte;
+//         if (bit_index == 8) {
+//             decoded_data[byte_count++] = current_byte;
             
-            LOG_INF("    → Byte[%d] = 0x%02X (binary: %c%c%c%c%c%c%c%c)", 
-                    byte_count - 1, 
-                    current_byte,
-                    (current_byte & 0x80) ? '1' : '0',
-                    (current_byte & 0x40) ? '1' : '0',
-                    (current_byte & 0x20) ? '1' : '0',
-                    (current_byte & 0x10) ? '1' : '0',
-                    (current_byte & 0x08) ? '1' : '0',
-                    (current_byte & 0x04) ? '1' : '0',
-                    (current_byte & 0x02) ? '1' : '0',
-                    (current_byte & 0x01) ? '1' : '0');
+//             LOG_INF("    → Byte[%d] = 0x%02X (binary: %c%c%c%c%c%c%c%c)", 
+//                     byte_count - 1, 
+//                     current_byte,
+//                     (current_byte & 0x80) ? '1' : '0',
+//                     (current_byte & 0x40) ? '1' : '0',
+//                     (current_byte & 0x20) ? '1' : '0',
+//                     (current_byte & 0x10) ? '1' : '0',
+//                     (current_byte & 0x08) ? '1' : '0',
+//                     (current_byte & 0x04) ? '1' : '0',
+//                     (current_byte & 0x02) ? '1' : '0',
+//                     (current_byte & 0x01) ? '1' : '0');
             
-            current_byte = 0;
-            bit_index = 0;
+//             current_byte = 0;
+//             bit_index = 0;
             
-            if (byte_count >= MAX_IR_DATA_LEN) break;
-        }
-    }
+//             if (byte_count >= MAX_IR_DATA_LEN) break;
+//         }
+//     }
     
-    // Save partial byte if exists
-    if (bit_index > 0) {
-        decoded_data[byte_count++] = current_byte;
-        LOG_INF("    → Byte[%d] = 0x%02X (partial, %d bits)", 
-                byte_count - 1, current_byte, bit_index);
-    }
+//     // Save partial byte if exists
+//     if (bit_index > 0) {
+//         decoded_data[byte_count++] = current_byte;
+//         LOG_INF("    → Byte[%d] = 0x%02X (partial, %d bits)", 
+//                 byte_count - 1, current_byte, bit_index);
+//     }
     
-    // ⭐ PHASE 3: Save result
-    if (byte_count > 0) {
-        memcpy(ir_data.data, decoded_data, byte_count);
-        ir_data.data_len = byte_count;
+//     // ⭐ PHASE 3: Save result
+//     if (byte_count > 0) {
+//         memcpy(ir_data.data, decoded_data, byte_count);
+//         ir_data.data_len = byte_count;
         
-        LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        LOG_INF("✅ IR DECODED SUCCESSFULLY!");
-        LOG_INF("   Total bits: %d", decoded_bits);
-        LOG_INF("   Data bytes: %d", byte_count);
-        LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        LOG_HEXDUMP_INF(decoded_data, byte_count, "IR Raw Data");
-        LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+//         LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+//         LOG_INF("✅ IR DECODED SUCCESSFULLY!");
+//         LOG_INF("   Total bits: %d", decoded_bits);
+//         LOG_INF("   Data bytes: %d", byte_count);
+//         LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+//         LOG_HEXDUMP_INF(decoded_data, byte_count, "IR Raw Data");
+//         LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         
-        // Notify app
-        uint8_t notify_data[4] = {
-            0x02,  // New IR received
-            (byte_count >> 8) & 0xFF,
-            byte_count & 0xFF,
-            0x00
-        };
+//         // Notify app
+//         uint8_t notify_data[4] = {
+//             0x02,  // New IR received
+//             (byte_count >> 8) & 0xFF,
+//             byte_count & 0xFF,
+//             0x00
+//         };
         
-        k_mutex_lock(&conn_mutex, K_FOREVER);
-        for (int i = 0; i < MAX_CONNECTIONS; i++) {
-            if (active_conns[i]) {
-                bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[26], 
-                              notify_data, sizeof(notify_data));
-            }
-        }
-        k_mutex_unlock(&conn_mutex);
-    } else {
-        LOG_WRN("❌ No valid data decoded");
-        LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    }
+//         k_mutex_lock(&conn_mutex, K_FOREVER);
+//         for (int i = 0; i < MAX_CONNECTIONS; i++) {
+//             if (active_conns[i]) {
+//                 bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[26], 
+//                               notify_data, sizeof(notify_data));
+//             }
+//         }
+//         k_mutex_unlock(&conn_mutex);
+//     } else {
+//         LOG_WRN("❌ No valid data decoded");
+//         LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+//     }
     
-    k_mutex_unlock(&ir_rx_mutex);
-}
+//     k_mutex_unlock(&ir_rx_mutex);
+// }
 
 
 // Start IR learning mode
