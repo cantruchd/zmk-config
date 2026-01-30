@@ -692,7 +692,7 @@ static void ir_rx_interrupt(const struct device *dev,
 }
 
 // Convert captured pulses to NEC bytes
-'static void ir_convert_pulses_to_bytes(void)' {
+static void ir_convert_pulses_to_bytes(void) {
     k_mutex_lock(&ir_rx_mutex, K_FOREVER);
     
     if (ir_rx.pulse_count < 4) {
