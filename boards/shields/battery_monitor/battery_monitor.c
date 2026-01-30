@@ -857,7 +857,7 @@ static struct ir_status ir_status = {
 
 // Command database - lưu tất cả IR commands
 // Sử dụng hash map hoặc array, ở đây dùng array đơn giản
-#define MAX_IR_COMMANDS 100
+
 static struct ir_command ir_commands[MAX_IR_COMMANDS] = {0};
 static uint8_t ir_cmd_count = 0;
 
@@ -991,7 +991,7 @@ static void ir_rx_timeout_handler(struct k_work *work) {
     ir_detect_and_decode();
 }
 
-// SỬA LẠI ir_rx_interrupt():
+// ⭐ SỬA LẠI HOÀN TOÀN ir_rx_interrupt()
 static void ir_rx_interrupt(const struct device *dev, 
                             struct gpio_callback *cb, 
                             uint32_t pins) {
@@ -1017,30 +1017,36 @@ static void ir_rx_interrupt(const struct device *dev,
     uint32_t cycles_elapsed = now_cycles - ir_rx.last_edge_cycles;
     uint32_t duration_us = cycles_to_us(cycles_elapsed);
     
-    // ❌ XÓA PHẦN TIMEOUT CHECK Ở ĐÂY (không cần nữa)
+    // Ignore very short pulses (< 50us = noise)
+    if (duration_us < 50) {
+        ir_rx.last_edge_cycles = now_cycles;
+        return;
+    }
     
-    // Store pulse
+    // ⭐ Store pulse in original format (cho decode functions)
     if (ir_rx.pulse_count < IR_MAX_PULSES) {
         ir_rx.pulses[ir_rx.pulse_count].duration_us = duration_us;
-        ir_rx.pulses[ir_rx.pulse_count].is_mark = (pin_state == 0);
+        ir_rx.pulses[ir_rx.pulse_count].is_mark = (pin_state == 0);  // Active LOW
         ir_rx.pulse_count++;
         
-        if (ir_rx.pulse_count % 10 == 0) {
-            LOG_DBG("Pulse %d: %d us (%s)", 
-                    ir_rx.pulse_count, duration_us,
-                    pin_state == 0 ? "MARK" : "SPACE");
+        // Log every 50 pulses for debugging
+        if (ir_rx.pulse_count % 50 == 0) {
+            LOG_DBG("Received %d pulses...", ir_rx.pulse_count);
         }
     } else {
         // Buffer full
-        LOG_WRN("⚠️  Pulse buffer full!");
+        LOG_WRN("⚠️  Pulse buffer full at %d pulses!", IR_MAX_PULSES);
         ir_rx.is_receiving = false;
-        k_work_cancel_delayable(&ir_rx_timeout_work);  // ⭐ Cancel timer
-        ir_convert_pulses_to_bytes();
+        k_work_cancel_delayable(&ir_rx_timeout_work);
+        
+        // Trigger decode immediately
+        ir_detect_and_decode();
         return;
     }
     
     ir_rx.last_edge_cycles = now_cycles;
-}
+}  ir_rx.last_edge_cycles = now_cycles;
+
 
 
 
