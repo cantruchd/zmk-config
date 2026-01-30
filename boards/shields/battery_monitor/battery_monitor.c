@@ -3215,7 +3215,7 @@ static int battery_monitor_init(void) {
     gpio_init_callback(&ir_rx_cb_data, ir_rx_interrupt, BIT(IR_RX_PIN));
     gpio_add_callback(gpio_dev, &ir_rx_cb_data);
 
-    LOG_INF("IR LED configured on P0.%d", IR_LED_PIN);
+   
     
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     LOG_INF("📡 CONNECTION MANAGEMENT:");
