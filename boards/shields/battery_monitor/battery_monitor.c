@@ -30,6 +30,20 @@
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
+
+
+// ============================================================================
+// IR TRANSMISSION - PWM-BASED (near top, after includes)
+// ============================================================================
+
+// PWM device spec from devicetree
+static const struct pwm_dt_spec ir_pwm = PWM_DT_SPEC_GET(DT_ALIAS(ir_pwm));
+
+// 38kHz carrier: period = 26.316us, duty = 50% (13.158us)
+#define IR_CARRIER_PERIOD_NS    26316  // 1/38000 * 1e9
+#define IR_CARRIER_PULSE_NS     13158  // 50% duty cycle
+
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -1178,25 +1192,35 @@ static void check_ir_auto_control(void) {
     }
 }
 
-// Generate 38kHz carrier (bit-banging)
+// Generate 38kHz carrier for specified duration
 static void ir_carrier_on(uint32_t duration_us) {
-    if (!device_is_ready(gpio_dev)) return;
-    
-    // 38kHz = 26.3us period (13us HIGH + 13us LOW)
-    uint32_t cycles = (duration_us * 38) / 1000;
-    
-    for (uint32_t i = 0; i < cycles; i++) {
-        gpio_pin_set(gpio_dev, IR_TX_PIN, 1);
-        k_busy_wait(13);  // 13us HIGH
-        gpio_pin_set(gpio_dev, IR_TX_PIN, 0);
-        k_busy_wait(13);  // 13us LOW
+    if (!device_is_ready(ir_pwm.dev)) {
+        LOG_ERR("PWM device not ready");
+        return;
     }
+    
+    // Set 38kHz PWM with 50% duty cycle
+    int ret = pwm_set_dt(&ir_pwm, IR_CARRIER_PERIOD_NS, IR_CARRIER_PULSE_NS);
+    if (ret < 0) {
+        LOG_ERR("PWM set failed: %d", ret);
+        return;
+    }
+    
+    // Wait for duration
+    k_busy_wait(duration_us);
+    
+    // Stop PWM
+    pwm_set_dt(&ir_pwm, IR_CARRIER_PERIOD_NS, 0);
 }
 
-// No carrier (space)
+// No carrier (space) - PWM off
 static void ir_carrier_off(uint32_t duration_us) {
-    if (!device_is_ready(gpio_dev)) return;
-    gpio_pin_set(gpio_dev, IR_TX_PIN, 0);
+    if (!device_is_ready(ir_pwm.dev)) return;
+    
+    // Ensure PWM is off
+    pwm_set_dt(&ir_pwm, IR_CARRIER_PERIOD_NS, 0);
+    
+    // Wait for duration
     k_busy_wait(duration_us);
 }
 
@@ -4118,15 +4142,22 @@ static int battery_monitor_init(void) {
     }
 
  
-    // Configure IR LED
-    ret = gpio_pin_configure(gpio_dev, IR_TX_PIN, GPIO_OUTPUT_INACTIVE);
+     if (!device_is_ready(ir_pwm.dev)) {
+        LOG_ERR("IR PWM device not ready");
+        return -ENODEV;
+    }
+    
+    // Ensure PWM starts disabled
+    ret = pwm_set_dt(&ir_pwm, IR_CARRIER_PERIOD_NS, 0);
     if (ret < 0) {
-        LOG_ERR("Failed to configure IR LED: %d", ret);
+        LOG_ERR("Failed to initialize IR PWM: %d", ret);
         return ret;
     }
+    
+    LOG_INF("IR PWM initialized: 38kHz carrier on P0.20");
 
 
-        // Configure IR RX với interrupt
+    // Configure IR RX với interrupt
     ret = gpio_pin_configure(gpio_dev, IR_RX_PIN, GPIO_INPUT | GPIO_PULL_UP);
     if (ret < 0) {
         LOG_ERR("Failed to configure IR RX: %d", ret);
