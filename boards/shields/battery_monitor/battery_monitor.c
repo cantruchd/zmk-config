@@ -342,14 +342,13 @@ struct ir_pulse {
     bool is_mark;  // true = mark (carrier on), false = space
 };
 
-struct ir_rx_data {
+// Thay đổi structure để dùng k_cycle_get_32() cho độ chính xác cao
+static struct ir_rx_data {
     struct ir_pulse pulses[IR_MAX_PULSES];
     uint16_t pulse_count;
     bool is_receiving;
-    int64_t last_edge_time;
-};
-
-static struct ir_rx_data ir_rx = {
+    uint32_t last_edge_cycles;  // ⭐ Dùng cycles thay vì time
+} ir_rx = {
     .pulse_count = 0,
     .is_receiving = false
 };
@@ -494,6 +493,14 @@ static int ir_start_learning(void);
 // IR AUTO CONTROL LOGIC (thêm function mới)
 // ============================================================================
 
+
+// Helper: Convert CPU cycles to microseconds
+static inline uint32_t cycles_to_us(uint32_t cycles) {
+    // nRF52840 @ 64MHz
+    return (cycles * 1000000ULL) / CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC;
+}
+
+
 // Helper: Tìm IR command theo ID
 static struct ir_command* find_ir_command(uint16_t cmd_id) {
     for (int i = 0; i < ir_cmd_count; i++) {
@@ -509,10 +516,6 @@ static void check_ir_auto_control(void) {
     if (!ir_auto_state.global_enabled) return;
     
     int64_t now = k_uptime_get();
-
-    int16_t temporary = k_uptime_ticks(); // Giả sử đã có hàm lấy nhiệt độ nội bộ
-
-    int temp2 = k_cycle_get_32();
     
     // Duyệt qua tất cả rules (theo thứ tự ưu tiên)
     for (int i = 0; i < MAX_AUTO_RULES; i++) {
@@ -656,46 +659,61 @@ static int ir_send_raw_data(const uint8_t *data, uint16_t len_bytes) {
 
 
 
-// GPIO interrupt callback for IR RX
+// ⭐ FIXED: GPIO interrupt callback
 static void ir_rx_interrupt(const struct device *dev, 
                             struct gpio_callback *cb, 
                             uint32_t pins) {
-    int64_t now = k_uptime_get() * 1000;  // Convert to microseconds
+    uint32_t now_cycles = k_cycle_get_32();
     int pin_state = gpio_pin_get(gpio_dev, IR_RX_PIN);
     
     if (!ir_rx.is_receiving) {
         // Start of new IR signal
         ir_rx.is_receiving = true;
         ir_rx.pulse_count = 0;
-        ir_rx.last_edge_time = now;
+        ir_rx.last_edge_cycles = now_cycles;
         LOG_DBG("📥 IR RX started");
         return;
     }
     
-    // Calculate pulse duration
-    uint32_t duration = (uint32_t)(now - ir_rx.last_edge_time);
+    // Calculate pulse duration in microseconds
+    uint32_t cycles_elapsed = now_cycles - ir_rx.last_edge_cycles;
+    uint32_t duration_us = cycles_to_us(cycles_elapsed);
     
-    // Timeout check
-    if (duration > IR_RX_TIMEOUT_US) {
-        LOG_INF("📥 IR RX complete: %d pulses", ir_rx.pulse_count);
+    // Timeout check (100ms = 100000us)
+    if (duration_us > IR_RX_TIMEOUT_US) {
+        LOG_INF("📥 IR RX complete: %d pulses (timeout)", ir_rx.pulse_count);
         ir_rx.is_receiving = false;
         
-        // Convert to bytes and save
+        // Convert to bytes
         ir_convert_pulses_to_bytes();
         return;
     }
     
     // Store pulse
     if (ir_rx.pulse_count < IR_MAX_PULSES) {
-        ir_rx.pulses[ir_rx.pulse_count].duration_us = duration;
-        ir_rx.pulses[ir_rx.pulse_count].is_mark = (pin_state == 0);  // Active LOW receiver
+        ir_rx.pulses[ir_rx.pulse_count].duration_us = duration_us;
+        ir_rx.pulses[ir_rx.pulse_count].is_mark = (pin_state == 0);  // TSOP active LOW
         ir_rx.pulse_count++;
+        
+        // Debug log mỗi 10 pulses
+        if (ir_rx.pulse_count % 10 == 0) {
+            LOG_DBG("Pulse %d: %d us (%s)", 
+                    ir_rx.pulse_count, 
+                    duration_us, 
+                    pin_state == 0 ? "MARK" : "SPACE");
+        }
+    } else {
+        // Buffer full - force stop
+        LOG_WRN("⚠️  Pulse buffer full! Stopping RX");
+        ir_rx.is_receiving = false;
+        ir_convert_pulses_to_bytes();
+        return;
     }
     
-    ir_rx.last_edge_time = now;
+    ir_rx.last_edge_cycles = now_cycles;
 }
 
-// Convert captured pulses to NEC bytes
+// ⭐ IMPROVED: Pulse to bytes conversion with better logging
 static void ir_convert_pulses_to_bytes(void) {
     k_mutex_lock(&ir_rx_mutex, K_FOREVER);
     
@@ -705,26 +723,55 @@ static void ir_convert_pulses_to_bytes(void) {
         return;
     }
     
-    // Verify header (9ms mark + 4.5ms space)
-    if (ir_rx.pulses[0].duration_us < (IR_HEADER_MARK - IR_TOLERANCE_US) ||
-        ir_rx.pulses[0].duration_us > (IR_HEADER_MARK + IR_TOLERANCE_US)) {
-        LOG_WRN("Invalid header mark: %d us", ir_rx.pulses[0].duration_us);
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    LOG_INF("📊 IR DECODE: %d pulses captured", ir_rx.pulse_count);
+    
+    // Log first 10 pulses for debugging
+    for (int i = 0; i < MIN(10, ir_rx.pulse_count); i++) {
+        LOG_INF("  Pulse[%d]: %d us %s", 
+                i, 
+                ir_rx.pulses[i].duration_us,
+                ir_rx.pulses[i].is_mark ? "MARK" : "SPACE");
+    }
+    
+    // Check header (NEC: 9ms mark + 4.5ms space)
+    uint32_t header_mark = ir_rx.pulses[0].duration_us;
+    uint32_t header_space = ir_rx.pulses[1].duration_us;
+    
+    LOG_INF("Header: MARK=%d us, SPACE=%d us", header_mark, header_space);
+    
+    // Tolerant header check (±1000us)
+    if (header_mark < 8000 || header_mark > 10000) {
+        LOG_WRN("❌ Invalid header mark: %d us (expected ~9000)", header_mark);
+        LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         k_mutex_unlock(&ir_rx_mutex);
         return;
     }
     
-    // Decode bits
+    if (header_space < 3500 || header_space > 5500) {
+        LOG_WRN("❌ Invalid header space: %d us (expected ~4500)", header_space);
+        LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        k_mutex_unlock(&ir_rx_mutex);
+        return;
+    }
+    
+    LOG_INF("✅ Valid NEC header detected!");
+    
+    // Decode bits (start from pulse 2)
     uint8_t decoded_data[MAX_IR_DATA_LEN] = {0};
     uint16_t byte_count = 0;
     uint8_t current_byte = 0;
     uint8_t bit_index = 0;
     
-    // Start from pulse 2 (after header)
     for (int i = 2; i < ir_rx.pulse_count - 1; i += 2) {
+        // Each bit = MARK + SPACE
+        if (!ir_rx.pulses[i].is_mark) continue;  // Skip if not mark
+        
+        uint32_t mark_duration = ir_rx.pulses[i].duration_us;
         uint32_t space_duration = ir_rx.pulses[i + 1].duration_us;
         
-        // Determine if bit is 0 or 1
-        bool is_one = (space_duration > (IR_ONE_SPACE - IR_TOLERANCE_US));
+        // NEC: 560us mark + (560us space = 0, 1690us space = 1)
+        bool is_one = (space_duration > 1000);  // Threshold at 1ms
         
         if (is_one) {
             current_byte |= (1 << bit_index);
@@ -734,6 +781,7 @@ static void ir_convert_pulses_to_bytes(void) {
         
         if (bit_index == 8) {
             decoded_data[byte_count++] = current_byte;
+            LOG_INF("  Byte[%d] = 0x%02X", byte_count - 1, current_byte);
             current_byte = 0;
             bit_index = 0;
             
@@ -746,12 +794,13 @@ static void ir_convert_pulses_to_bytes(void) {
         memcpy(ir_data.data, decoded_data, byte_count);
         ir_data.data_len = byte_count;
         
-        LOG_INF("✅ IR decoded: %d bytes", byte_count);
-        LOG_HEXDUMP_INF(decoded_data, byte_count, "IR data:");
+        LOG_INF("✅ IR decoded successfully!");
+        LOG_INF("   Data: %d bytes", byte_count);
+        LOG_HEXDUMP_INF(decoded_data, byte_count, "IR Code");
         
         // Notify app
         uint8_t notify_data[4] = {
-            0x02,  // Status: new IR received
+            0x02,  // New IR received
             (byte_count >> 8) & 0xFF,
             byte_count & 0xFF,
             0x00
@@ -765,8 +814,11 @@ static void ir_convert_pulses_to_bytes(void) {
             }
         }
         k_mutex_unlock(&conn_mutex);
+    } else {
+        LOG_WRN("❌ No valid data decoded");
     }
     
+    LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     k_mutex_unlock(&ir_rx_mutex);
 }
 
