@@ -40,6 +40,9 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // IR TRANSMISSION - PWM-BASED (near top, after includes)
 // ============================================================================
 
+// 38kHz carrier: period = 26.316us, duty = 50% (13.158us)
+#define IR_CARRIER_PERIOD_NS    26316  // 1/38000 * 1e9
+#define IR_CARRIER_PULSE_NS     13158  // 50% duty cycle
 // ============================================================================
 // IR TRANSMISSION - PWM-BASED (near top, after includes)
 // ============================================================================
@@ -56,9 +59,6 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
     #error "PWM0 not enabled in devicetree"
 #endif
 
-// 38kHz carrier: period = 26.316us, duty = 50% (13.158us)
-#define IR_CARRIER_PERIOD_NS    26316  // 1/38000 * 1e9
-#define IR_CARRIER_PULSE_NS     13158  // 50% duty cycle
 
 // ============================================================================
 // Configuration
