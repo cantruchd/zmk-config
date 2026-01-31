@@ -4284,7 +4284,8 @@ SYS_INIT(battery_monitor_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
  *         )
  *         await c.write_gatt_char(TEMP_UUID, data)
  * 
- * asyncio.run(configure_temp("XX:XX:XX:XX:XX:XX"))
+ * asyncio.run(conf
+ * igure_temp("XX:XX:XX:XX:XX:XX"))
  * ```
  * 
  * Storage: "btmon/temp" in NVS (12 bytes)
