@@ -357,7 +357,7 @@ static void start_auto_updates(void);
 #define IR_CARRIER_FREQ 38000  // 38kHz carrier
 
 // IR Timing (microseconds) - NEC Protocol
-#define IR_MARK_TIME   560   // Mark pulse
+#define IR_MARK_TIME   650   // Mark pulse
 #define IR_SPACE_TIME  560   // Space for bit 0
 #define IR_ONE_SPACE   1690  // Space for bit 1
 #define IR_HEADER_MARK 9000  // Header mark
