@@ -140,7 +140,7 @@ kscan0: kscan {
 &gpio0 {
     status = "okay";
     // Force GPIO init before PWM
-    priority = <40>;
+    
 };
 
 
@@ -151,8 +151,7 @@ kscan0: kscan {
 };
 
 &pwm0 {
-    status = "okay";
-    priority = <50>;
+    status = "okay";    
     pinctrl-0 = <&pwm0_default>;   
     pinctrl-names = "default";
 };
