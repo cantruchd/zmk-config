@@ -4166,7 +4166,7 @@ static int battery_monitor_init(void) {
         // Fallback: try get by name
         ir_pwm_dev = device_get_binding("PWM_0");
     }
-    
+
     if (!device_is_ready(ir_pwm_dev)) {
         LOG_ERR("IR PWM device not ready");
         return -ENODEV;
@@ -4182,26 +4182,26 @@ static int battery_monitor_init(void) {
     LOG_INF("IR PWM initialized: 38kHz carrier on P0.20");
 
 
-    //     // Sau khi PWM init, thêm:
-    // // Manual IR RX config (không dùng devicetree)
-    // ret = gpio_pin_configure(gpio_dev, IR_RX_PIN, GPIO_INPUT | GPIO_PULL_UP);
-    // if (ret == 0) {
-    //     ret = gpio_pin_interrupt_configure(gpio_dev, IR_RX_PIN, GPIO_INT_EDGE_BOTH);
-    //     if (ret == 0) {
-    //         gpio_init_callback(&ir_rx_cb_data, ir_rx_interrupt, BIT(IR_RX_PIN));
-    //         gpio_add_callback(gpio_dev, &ir_rx_cb_data);
-    //         LOG_INF("✅ IR RX configured on P0.%d (manual)", IR_RX_PIN);
-    //     }
-    // }
+        // Sau khi PWM init, thêm:
+    // Manual IR RX config (không dùng devicetree)
+    ret = gpio_pin_configure(gpio_dev, IR_RX_PIN, GPIO_INPUT | GPIO_PULL_UP);
+    if (ret == 0) {
+        ret = gpio_pin_interrupt_configure(gpio_dev, IR_RX_PIN, GPIO_INT_EDGE_BOTH);
+        if (ret == 0) {
+            gpio_init_callback(&ir_rx_cb_data, ir_rx_interrupt, BIT(IR_RX_PIN));
+            gpio_add_callback(gpio_dev, &ir_rx_cb_data);
+            LOG_INF("✅ IR RX configured on P0.%d (manual)", IR_RX_PIN);
+        }
+    }
     
 
 
    
-    // // ⭐ Initialize IR RX timeout work
-    // k_work_init_delayable(&ir_rx_timeout_work, ir_rx_timeout_handler);
+    // ⭐ Initialize IR RX timeout work
+    k_work_init_delayable(&ir_rx_timeout_work, ir_rx_timeout_handler);
 
-    // // ⭐ THÊM DÒNG NÀY:
-    // k_work_init_delayable(&ir_learning_timeout_work, ir_learning_timeout_handler);
+    // ⭐ THÊM DÒNG NÀY:
+    k_work_init_delayable(&ir_learning_timeout_work, ir_learning_timeout_handler);
 
 
     LOG_INF("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
