@@ -911,7 +911,6 @@ static struct ir_auto_state ir_auto_state = {
     .last_matched_rule = 0xFF
 };
 
-static const struct device *ir_pwm_dev;
 static struct k_work_delayable ir_work;
 static K_MUTEX_DEFINE(ir_mutex);
 
