@@ -4158,7 +4158,12 @@ static int battery_monitor_init(void) {
 
     
     // ⭐ THAY BẰNG:
+   // Bằng:
     ir_pwm_dev = DEVICE_DT_GET(DT_NODELABEL(pwm0));
+    if (ir_pwm_dev == NULL) {
+        // Fallback: try get by name
+        ir_pwm_dev = device_get_binding("PWM_0");
+    }
     if (!device_is_ready(ir_pwm_dev)) {
         LOG_ERR("IR PWM device not ready");
         return -ENODEV;
