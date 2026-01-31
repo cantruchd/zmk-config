@@ -42,7 +42,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // 38kHz carrier: period = 26.316us, duty = 50% (13.158us)
 #define IR_CARRIER_PERIOD_NS    26316  // 1/38000 * 1e9
-#define IR_CARRIER_PULSE_NS     26050  // 99% duty cycle
+#define IR_CARRIER_PULSE_NS     21053  // 80% duty cycle
 // ============================================================================
 // IR TRANSMISSION - PWM-BASED (near top, after includes)
 // ============================================================================
