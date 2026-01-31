@@ -47,7 +47,10 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // IR TRANSMISSION - PWM-BASED (near top, after includes)
 // ============================================================================
 // ⭐ FIX: Sử dụng device pointer trực tiếp thay vì pwm_dt_spec
-static const struct device *ir_pwm_dev;
+// Bằng:
+static const struct device *ir_pwm_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(pwm0));
+
+
 #define IR_PWM_CHANNEL 0
 
 // Helper function để set PWM
@@ -4157,9 +4160,8 @@ static int battery_monitor_init(void) {
     }
 
     
-    // ⭐ THAY BẰNG:
-   // Bằng:
-    ir_pwm_dev = DEVICE_DT_GET(DT_NODELABEL(pwm0));
+    // Initialize IR PWM (manual, không dùng devicetree)  
+    
     if (ir_pwm_dev == NULL) {
         // Fallback: try get by name
         ir_pwm_dev = device_get_binding("PWM_0");
