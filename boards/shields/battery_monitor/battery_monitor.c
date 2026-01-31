@@ -46,18 +46,17 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // ============================================================================
 // IR TRANSMISSION - PWM-BASED (near top, after includes)
 // ============================================================================
+// ⭐ FIX: Sử dụng device pointer trực tiếp thay vì pwm_dt_spec
+static const struct device *ir_pwm_dev;
+#define IR_PWM_CHANNEL 0
 
-// ⭐ THAY ĐỔI: Dùng DT_NODELABEL thay vì DT_ALIAS
-#if DT_NODE_HAS_STATUS(DT_NODELABEL(pwm0), okay)
-    static const struct pwm_dt_spec ir_pwm = {
-        .dev = DEVICE_DT_GET(DT_NODELABEL(pwm0)),
-        .channel = 0,
-        .period = IR_CARRIER_PERIOD_NS,
-        .flags = 0
-    };
-#else
-    #error "PWM0 not enabled in devicetree"
-#endif
+// Helper function để set PWM
+static inline int ir_pwm_set(uint32_t period_ns, uint32_t pulse_ns) {
+    if (!device_is_ready(ir_pwm_dev)) {
+        return -ENODEV;
+    }
+    return pwm_set(ir_pwm_dev, IR_PWM_CHANNEL, period_ns, pulse_ns, 0);
+}
 
 
 // ============================================================================
@@ -1210,13 +1209,13 @@ static void check_ir_auto_control(void) {
 
 // Generate 38kHz carrier for specified duration
 static void ir_carrier_on(uint32_t duration_us) {
-    if (!device_is_ready(ir_pwm.dev)) {
+    if (!device_is_ready(ir_pwm_dev)) {
         LOG_ERR("PWM device not ready");
         return;
     }
     
     // Set 38kHz PWM with 50% duty cycle
-    int ret = pwm_set_dt(&ir_pwm, IR_CARRIER_PERIOD_NS, IR_CARRIER_PULSE_NS);
+    int ret = ir_pwm_set(IR_CARRIER_PERIOD_NS, IR_CARRIER_PULSE_NS);
     if (ret < 0) {
         LOG_ERR("PWM set failed: %d", ret);
         return;
@@ -1226,15 +1225,15 @@ static void ir_carrier_on(uint32_t duration_us) {
     k_busy_wait(duration_us);
     
     // Stop PWM
-    pwm_set_dt(&ir_pwm, IR_CARRIER_PERIOD_NS, 0);
+    ir_pwm_set(IR_CARRIER_PERIOD_NS, 0);
 }
 
 // No carrier (space) - PWM off
 static void ir_carrier_off(uint32_t duration_us) {
-    if (!device_is_ready(ir_pwm.dev)) return;
+    if (!device_is_ready(ir_pwm_dev)) return;
     
     // Ensure PWM is off
-    pwm_set_dt(&ir_pwm, IR_CARRIER_PERIOD_NS, 0);
+    ir_pwm_set(IR_CARRIER_PERIOD_NS, 0);
     
     // Wait for duration
     k_busy_wait(duration_us);
@@ -4157,14 +4156,16 @@ static int battery_monitor_init(void) {
                 last_battery_percent, current_voltage_mv);
     }
 
- 
-     if (!device_is_ready(ir_pwm.dev)) {
+    
+    // ⭐ THAY BẰNG:
+    ir_pwm_dev = DEVICE_DT_GET(DT_NODELABEL(pwm0));
+    if (!device_is_ready(ir_pwm_dev)) {
         LOG_ERR("IR PWM device not ready");
         return -ENODEV;
     }
-    
+
     // Ensure PWM starts disabled
-    ret = pwm_set_dt(&ir_pwm, IR_CARRIER_PERIOD_NS, 0);
+    ret = ir_pwm_set(IR_CARRIER_PERIOD_NS, 0);
     if (ret < 0) {
         LOG_ERR("Failed to initialize IR PWM: %d", ret);
         return ret;
