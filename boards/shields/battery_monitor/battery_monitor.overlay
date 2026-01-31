@@ -137,7 +137,11 @@ kscan0: kscan {
 
 
 
-
+&gpio0 {
+    status = "okay";
+    // Force GPIO init before PWM
+    priority = <40>;
+};
 
 
 / {
@@ -148,9 +152,9 @@ kscan0: kscan {
 
 &pwm0 {
     status = "okay";
-    pinctrl-0 = <&pwm0_default>;
-    pinctrl-1 = <&pwm0_sleep>;
-    pinctrl-names = "default", "sleep";
+    priority = <50>;
+    pinctrl-0 = <&pwm0_default>;   
+    pinctrl-names = "default";
 };
 
 &pinctrl {
@@ -158,12 +162,5 @@ kscan0: kscan {
         group1 {
             psels = <NRF_PSEL(PWM_OUT0, 0, 20)>;  // P0.20 = IR TX
         };
-    };
-
-    pwm0_sleep: pwm0_sleep {
-        group1 {
-            psels = <NRF_PSEL(PWM_OUT0, 0, 20)>;
-            low-power-enable;
-        };
-    };
+    };   
 };
