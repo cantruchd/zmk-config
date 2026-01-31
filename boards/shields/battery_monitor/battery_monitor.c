@@ -42,7 +42,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
 // 38kHz carrier: period = 26.316us, duty = 50% (13.158us)
 #define IR_CARRIER_PERIOD_NS    26316  // 1/38000 * 1e9
-#define IR_CARRIER_PULSE_NS     21053  // 80% duty cycle
+#define IR_CARRIER_PULSE_NS     26050  // 99% duty cycle
 // ============================================================================
 // IR TRANSMISSION - PWM-BASED (near top, after includes)
 // ============================================================================
@@ -357,7 +357,7 @@ static void start_auto_updates(void);
 #define IR_CARRIER_FREQ 38000  // 38kHz carrier
 
 // IR Timing (microseconds) - NEC Protocol
-#define IR_MARK_TIME   650   // Mark pulse
+#define IR_MARK_TIME   560   // Mark pulse
 #define IR_SPACE_TIME  560   // Space for bit 0
 #define IR_ONE_SPACE   1690  // Space for bit 1
 #define IR_HEADER_MARK 9000  // Header mark
