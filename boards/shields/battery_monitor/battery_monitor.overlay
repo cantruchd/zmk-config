@@ -159,3 +159,15 @@ kscan0: kscan {
         };
     };   
 };
+
+
+
+/ {
+    ir_receiver {
+        compatible = "gpio-keys";
+        ir_rx: ir_rx_0 {
+            gpios = <&gpio0 11 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+            label = "IR Receiver";
+        };
+    };
+};

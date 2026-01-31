@@ -4174,21 +4174,50 @@ static int battery_monitor_init(void) {
     LOG_INF("IR PWM initialized: 38kHz carrier on P0.20");
 
 
-    // Configure IR RX với interrupt
-    ret = gpio_pin_configure(gpio_dev, IR_RX_PIN, GPIO_INPUT | GPIO_PULL_UP);
+    // // Configure IR RX với interrupt
+    // ret = gpio_pin_configure(gpio_dev, IR_RX_PIN, GPIO_INPUT | GPIO_PULL_UP);
+    // if (ret < 0) {
+    //     LOG_ERR("Failed to configure IR RX: %d", ret);
+    //     return ret;
+    // }
+
+    // ret = gpio_pin_interrupt_configure(gpio_dev, IR_RX_PIN, GPIO_INT_EDGE_BOTH);
+    // if (ret < 0) {
+    //     LOG_ERR("Failed to configure IR RX interrupt: %d", ret);
+    //     return ret;
+    // }
+
+    // gpio_init_callback(&ir_rx_cb_data, ir_rx_interrupt, BIT(IR_RX_PIN));
+    // gpio_add_callback(gpio_dev, &ir_rx_cb_data);
+
+    // Configure IR RX từ devicetree
+#if DT_NODE_EXISTS(DT_NODELABEL(ir_rx))
+    const struct gpio_dt_spec ir_rx_spec = GPIO_DT_SPEC_GET(DT_NODELABEL(ir_rx), gpios);
+    
+    if (!device_is_ready(ir_rx_spec.port)) {
+        LOG_ERR("IR RX GPIO device not ready");
+        return -ENODEV;
+    }
+    
+    ret = gpio_pin_configure_dt(&ir_rx_spec, GPIO_INPUT);
     if (ret < 0) {
         LOG_ERR("Failed to configure IR RX: %d", ret);
         return ret;
     }
-
-    ret = gpio_pin_interrupt_configure(gpio_dev, IR_RX_PIN, GPIO_INT_EDGE_BOTH);
+    
+    ret = gpio_pin_interrupt_configure_dt(&ir_rx_spec, GPIO_INT_EDGE_BOTH);
     if (ret < 0) {
         LOG_ERR("Failed to configure IR RX interrupt: %d", ret);
         return ret;
     }
-
-    gpio_init_callback(&ir_rx_cb_data, ir_rx_interrupt, BIT(IR_RX_PIN));
-    gpio_add_callback(gpio_dev, &ir_rx_cb_data);
+    
+    gpio_init_callback(&ir_rx_cb_data, ir_rx_interrupt, BIT(ir_rx_spec.pin));
+    gpio_add_callback(ir_rx_spec.port, &ir_rx_cb_data);
+    
+    LOG_INF("IR RX configured on P0.%d", ir_rx_spec.pin);
+#else
+    LOG_WRN("IR RX not defined in devicetree - IR learning disabled");
+#endif
 
    
     // ⭐ Initialize IR RX timeout work
