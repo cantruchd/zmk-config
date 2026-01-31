@@ -137,11 +137,7 @@ kscan0: kscan {
 
 
 
-&gpio0 {
-    status = "okay";
-    // Force GPIO init before PWM
-    
-};
+
 
 
 / {
