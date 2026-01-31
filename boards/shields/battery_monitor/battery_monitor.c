@@ -48,7 +48,7 @@ LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 // ============================================================================
 // ⭐ FIX: Sử dụng device pointer trực tiếp thay vì pwm_dt_spec
 // Bằng:
-static const struct device *ir_pwm_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(pwm0));
+static const struct device *ir_pwm_dev = NULL;
 
 
 #define IR_PWM_CHANNEL 0
@@ -4161,10 +4161,12 @@ static int battery_monitor_init(void) {
     
     // Initialize IR PWM (manual, không dùng devicetree)  
     
+    ir_pwm_dev = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(pwm0));
     if (ir_pwm_dev == NULL) {
         // Fallback: try get by name
         ir_pwm_dev = device_get_binding("PWM_0");
     }
+    
     if (!device_is_ready(ir_pwm_dev)) {
         LOG_ERR("IR PWM device not ready");
         return -ENODEV;
