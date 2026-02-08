@@ -505,7 +505,8 @@ struct ir_command {
     uint16_t cmd_id;
     ir_protocol_t protocol;
     char description[32];
-    
+    bool is_off_command;  // ⭐ THÊM: Đánh dấu lệnh này là OFF command
+
     union {
         // Decoded data (~70 bytes cho AC protocols)
         struct ir_decoded_data decoded;
@@ -882,6 +883,7 @@ struct ir_auto_state {
     bool global_enabled;         // Bật/tắt toàn bộ auto control
     uint8_t active_rule_count;   // Số rule đang active
     uint8_t last_matched_rule;   // Rule cuối cùng đã match
+    bool pause_all_rules;        // ⭐ THÊM: Tạm dừng tất cả rules khi OFF command được gửi
 };
 
 // ============================================================================
@@ -1156,10 +1158,15 @@ static struct ir_command* find_ir_command(uint16_t cmd_id) {
     return NULL;
 }
 
-// Kiểm tra và thực thi auto rules dựa trên nhiệt độ
 // Line ~760 - Thay thế hàm check_ir_auto_control
 static void check_ir_auto_control(void) {
     if (!ir_auto_state.global_enabled) return;
+    
+    // ⭐ Kiểm tra pause flag
+    if (ir_auto_state.pause_all_rules) {
+        LOG_DBG("Rules paused by OFF command - skipping auto control");
+        return;
+    }
     
     int64_t now = k_uptime_get();
     
@@ -1167,29 +1174,22 @@ static void check_ir_auto_control(void) {
     for (int i = 0; i < MAX_AUTO_RULES; i++) {
         struct ir_auto_rule *rule = &ir_auto_rules[i];
         
-        // ⭐ Skip disabled rules
         if (!rule->enabled) continue;
         
-        // Kiểm tra nhiệt độ có nằm trong khoảng không
         if (temp_internal >= rule->temp_min && temp_internal < rule->temp_max) {
             
-            // ⭐ KIỂM TRA: Nếu lệnh cuối cùng đã gửi trùng với lệnh hiện tại
             if (rule->last_sent_cmd_id == rule->cmd_id) {
-                LOG_DBG("Rule %d: Skipping - already sent cmd %u (temp %d.%02d°C)", 
-                        i, rule->cmd_id,
-                        temp_internal / 100, abs(temp_internal % 100));
-                continue;  // Bỏ qua, không gửi lại
+                LOG_DBG("Rule %d: Skipping - already sent cmd %u", i, rule->cmd_id);
+                continue;
             }
             
-            // Check minimum interval (chỉ khi cmd_id khác)
             int64_t elapsed = now - rule->last_sent_time;
             uint32_t min_interval = rule->min_interval_ms > 0 ? 
                                    rule->min_interval_ms : IR_DEFAULT_MIN_INTERVAL_MS;
             
             if (elapsed < min_interval && rule->last_sent_time != 0) {
-                LOG_DBG("Rule %d: Too soon (elapsed %lld ms < %u ms)", 
-                        i, elapsed, min_interval);
-                continue;  // Too soon
+                LOG_DBG("Rule %d: Too soon", i);
+                continue;
             }
             
             struct ir_command *cmd = find_ir_command(rule->cmd_id);
@@ -1198,30 +1198,28 @@ static void check_ir_auto_control(void) {
                 continue;
             }
 
-            LOG_INF("❄️ Auto Rule %d matched:", i);
-            LOG_INF("   Temp %d.%02d°C in range [%d.%02d, %d.%02d)", 
-                    temp_internal / 100, abs(temp_internal % 100),
-                    rule->temp_min / 100, abs(rule->temp_min % 100),
-                    rule->temp_max / 100, abs(rule->temp_max % 100));
-            LOG_INF("   Sending Command %u: %s (protocol %d)", 
-                    cmd->cmd_id, cmd->description, cmd->protocol);
+            LOG_INF("❄️ Auto Rule %d matched - sending cmd %u", i, cmd->cmd_id);
 
-            // ⭐ Send command
             int ret = ir_send_command(cmd);
 
             if (ret == 0) {
                 rule->last_sent_time = now;
-                rule->last_sent_cmd_id = rule->cmd_id;  // ⭐ Lưu cmd_id vừa gửi
+                rule->last_sent_cmd_id = rule->cmd_id;
                 ir_auto_state.last_matched_rule = i;
-                LOG_INF("✅ Auto IR sent successfully (cmd %u saved)", rule->cmd_id);
+                LOG_INF("✅ Auto IR sent successfully");
+                
+                // ⭐ Nếu lệnh vừa gửi là OFF → pause sẽ được set trong ir_send_command
+                // Break ngay để không gửi rule tiếp theo
+                if (cmd->is_off_command) {
+                    break;
+                }
+                
                 break;
             } else {
                 LOG_ERR("❌ Auto IR failed: %d", ret);
             }
         } else {
-            // ⭐ Khi nhiệt độ ra khỏi range, reset last_sent_cmd_id
             if (rule->last_sent_cmd_id != 0) {
-                LOG_DBG("Rule %d: Temp out of range - resetting last cmd", i);
                 rule->last_sent_cmd_id = 0;
             }
         }
@@ -1804,6 +1802,9 @@ static ssize_t read_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *a
         response[pos++] = desc_len;
         memcpy(&response[pos], cmd->description, desc_len);
         pos += desc_len;
+
+         // ⭐ Thêm is_off_command flag
+        response[pos++] = cmd->is_off_command ? 0x01 : 0x00;
         
         if (pos > 400) break;  // Avoid overflow
     }
@@ -1830,7 +1831,7 @@ static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *
     if (operation == 0x01) {  // Add/Update command
         // Format: [0x01][cmd_id_h][cmd_id_l][protocol][data_size_h][data_size_l][desc_len][description][ir_data...]
         
-        if (len < 7) {
+        if (len < 8) {
             k_mutex_unlock(&ir_mutex);
             return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
         }
@@ -1839,7 +1840,7 @@ static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *
         uint16_t data_size = (data[4] << 8) | data[5];
         uint8_t desc_len = data[6];
         
-        if ((7 + desc_len + data_size) > len) {
+        if ((7 + desc_len + 1 + data_size) > len) {  // ⭐ +1 cho is_off flag
             k_mutex_unlock(&ir_mutex);
             return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
         }
@@ -1865,7 +1866,10 @@ static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *
         memcpy(cmd->description, &data[7], desc_len);
         cmd->description[desc_len] = '\0';
         
-        const uint8_t *ir_data = &data[7 + desc_len];
+        // ⭐ Đọc is_off_command flag
+        cmd->is_off_command = (data[7 + desc_len] != 0);
+        
+        const uint8_t *ir_data = &data[7 + desc_len + 1];  // ⭐ +1 cho is_off byte
         
         if (cmd->protocol == IR_PROTOCOL_RAW) {
             // RAW pulses (compressed format)
@@ -2124,13 +2128,42 @@ static int ir_send_raw_pulses(const struct ir_pulse_compressed *pulses, uint16_t
     return 0;
 }
 
-// ⭐ Unified send function
+// Line ~1240 - Thay thế hàm ir_send_command
 static int ir_send_command(const struct ir_command *cmd) {
+    int ret;
+    
     if (cmd->protocol == IR_PROTOCOL_RAW) {
-        return ir_send_raw_pulses(cmd->raw.pulses, cmd->raw.pulse_count);
+        ret = ir_send_raw_pulses(cmd->raw.pulses, cmd->raw.pulse_count);
     } else {
-        return ir_send_decoded(&cmd->decoded);
+        ret = ir_send_decoded(&cmd->decoded);
     }
+    
+    // ⭐ Nếu gửi thành công và là OFF command → pause all rules
+    if (ret == 0 && cmd->is_off_command) {
+        k_mutex_lock(&ir_mutex, K_FOREVER);
+        ir_auto_state.pause_all_rules = true;
+        k_mutex_unlock(&ir_mutex);
+        
+        LOG_WRN("❄️ OFF Command executed (ID %u) - ALL RULES PAUSED", cmd->cmd_id);
+        
+        // Notify app về pause state
+        uint8_t notify_data[3] = {
+            ir_auto_state.global_enabled ? 0x01 : 0x00,
+            ir_auto_state.active_rule_count,
+            0xFF  // Special: pause active
+        };
+        
+        k_mutex_lock(&conn_mutex, K_FOREVER);
+        for (int i = 0; i < MAX_CONNECTIONS; i++) {
+            if (active_conns[i]) {
+                bt_gatt_notify(active_conns[i], &battery_monitor_svc.attrs[32],
+                              notify_data, sizeof(notify_data));
+            }
+        }
+        k_mutex_unlock(&conn_mutex);
+    }
+    
+    return ret;
 }
 
 // ============================================================================
@@ -2302,21 +2335,25 @@ static ssize_t write_ir_auto_rules(struct bt_conn *conn, const struct bt_gatt_at
 // BLE HANDLERS FOR GLOBAL AUTO ENABLE
 // ============================================================================
 
+// Line ~1550 - Sửa read_ir_auto_enable
 static ssize_t read_ir_auto_enable(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                     void *buf, uint16_t len, uint16_t offset) {
-    uint8_t data[3] = {
+    uint8_t data[4] = {
         ir_auto_state.global_enabled ? 0x01 : 0x00,
         ir_auto_state.active_rule_count,
-        ir_auto_state.last_matched_rule
+        ir_auto_state.last_matched_rule,
+        ir_auto_state.pause_all_rules ? 0x01 : 0x00  // ⭐ Thêm pause state
     };
     
-    LOG_INF("📖 Auto Control: %s (%d active rules)", 
+    LOG_INF("📖 Auto Control: %s (%d active rules, %s)", 
             ir_auto_state.global_enabled ? "ENABLED" : "DISABLED",
-            ir_auto_state.active_rule_count);
+            ir_auto_state.active_rule_count,
+            ir_auto_state.pause_all_rules ? "PAUSED" : "RUNNING");
     
     return bt_gatt_attr_read(conn, attr, buf, len, offset, data, sizeof(data));
 }
 
+// Line ~1570 - Thêm vào write_ir_auto_enable
 static ssize_t write_ir_auto_enable(struct bt_conn *conn, const struct bt_gatt_attr *attr,
                                      const void *buf, uint16_t len, uint16_t offset, uint8_t flags) {
     if (len < 1) {
@@ -2324,18 +2361,43 @@ static ssize_t write_ir_auto_enable(struct bt_conn *conn, const struct bt_gatt_a
     }
 
     const uint8_t *data = (const uint8_t *)buf;
-    bool enabled = (data[0] != 0);
+    uint8_t cmd = data[0];
     
     k_mutex_lock(&ir_mutex, K_FOREVER);
     
     bool was_enabled = ir_auto_state.global_enabled;
-    ir_auto_state.global_enabled = enabled;
     
-    // Reset last matched rule
-    if (enabled && !was_enabled) {
+    switch (cmd) {
+        case 0x00:  // Disable global auto
+            ir_auto_state.global_enabled = false;
+            break;
+            
+        case 0x01:  // Enable global auto
+            ir_auto_state.global_enabled = true;
+            ir_auto_state.pause_all_rules = false;  // ⭐ Resume khi enable
+            break;
+            
+        case 0x02:  // ⭐ THÊM: Resume rules (clear pause flag)
+            ir_auto_state.pause_all_rules = false;
+            
+            // Reset all rule timers
+            for (int i = 0; i < MAX_AUTO_RULES; i++) {
+                ir_auto_rules[i].last_sent_time = 0;
+                ir_auto_rules[i].last_sent_cmd_id = 0;
+            }
+            
+            LOG_WRN("❄️ Rules RESUMED - pause cleared");
+            break;
+            
+        default:
+            k_mutex_unlock(&ir_mutex);
+            return BT_GATT_ERR(BT_ATT_ERR_VALUE_NOT_ALLOWED);
+    }
+    
+    if (ir_auto_state.global_enabled && !was_enabled) {
         ir_auto_state.last_matched_rule = 0xFF;
+        ir_auto_state.pause_all_rules = false;  // ⭐ Clear pause khi enable
         
-        // Reset all rule timers
         for (int i = 0; i < MAX_AUTO_RULES; i++) {
             ir_auto_rules[i].last_sent_time = 0;
         }
@@ -2343,22 +2405,20 @@ static ssize_t write_ir_auto_enable(struct bt_conn *conn, const struct bt_gatt_a
     
     k_mutex_unlock(&ir_mutex);
     
-    // Log status change
-    if (was_enabled && !enabled) {
+    if (was_enabled && !ir_auto_state.global_enabled) {
         LOG_WRN("❄️ Global Auto Control: DISABLED ⛔");
-    } else if (!was_enabled && enabled) {
+    } else if (!was_enabled && ir_auto_state.global_enabled) {
         LOG_WRN("❄️ Global Auto Control: ENABLED ✅");
-        LOG_WRN("   Active rules: %d", ir_auto_state.active_rule_count);
     }
     
-    // Save to NVS
     save_ir_auto_state();
     
     // Notify
-    uint8_t notify_data[3] = {
+    uint8_t notify_data[4] = {
         ir_auto_state.global_enabled ? 0x01 : 0x00,
         ir_auto_state.active_rule_count,
-        ir_auto_state.last_matched_rule
+        ir_auto_state.last_matched_rule,
+        ir_auto_state.pause_all_rules ? 0x01 : 0x00  // ⭐ Thêm pause state
     };
     
     k_mutex_lock(&conn_mutex, K_FOREVER);
