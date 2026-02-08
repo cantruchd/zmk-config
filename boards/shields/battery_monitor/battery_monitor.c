@@ -874,6 +874,7 @@ struct ir_auto_rule {
     uint16_t cmd_id;             // Command ID cần gửi
     uint32_t min_interval_ms;    // Khoảng cách tối thiểu giữa 2 lần gửi (mặc định 10 phút)
     int64_t last_sent_time;      // Timestamp lần gửi cuối
+    uint16_t last_sent_cmd_id;   // ⭐ THÊM: Lưu cmd_id cuối cùng đã gửi    
 };
 
 // Global auto control state
@@ -1156,6 +1157,7 @@ static struct ir_command* find_ir_command(uint16_t cmd_id) {
 }
 
 // Kiểm tra và thực thi auto rules dựa trên nhiệt độ
+// Line ~760 - Thay thế hàm check_ir_auto_control
 static void check_ir_auto_control(void) {
     if (!ir_auto_state.global_enabled) return;
     
@@ -1165,12 +1167,21 @@ static void check_ir_auto_control(void) {
     for (int i = 0; i < MAX_AUTO_RULES; i++) {
         struct ir_auto_rule *rule = &ir_auto_rules[i];
         
-        // Skip disabled rules
+        // ⭐ Skip disabled rules
         if (!rule->enabled) continue;
         
         // Kiểm tra nhiệt độ có nằm trong khoảng không
         if (temp_internal >= rule->temp_min && temp_internal < rule->temp_max) {
-            // Check minimum interval
+            
+            // ⭐ KIỂM TRA: Nếu lệnh cuối cùng đã gửi trùng với lệnh hiện tại
+            if (rule->last_sent_cmd_id == rule->cmd_id) {
+                LOG_DBG("Rule %d: Skipping - already sent cmd %u (temp %d.%02d°C)", 
+                        i, rule->cmd_id,
+                        temp_internal / 100, abs(temp_internal % 100));
+                continue;  // Bỏ qua, không gửi lại
+            }
+            
+            // Check minimum interval (chỉ khi cmd_id khác)
             int64_t elapsed = now - rule->last_sent_time;
             uint32_t min_interval = rule->min_interval_ms > 0 ? 
                                    rule->min_interval_ms : IR_DEFAULT_MIN_INTERVAL_MS;
@@ -1181,7 +1192,6 @@ static void check_ir_auto_control(void) {
                 continue;  // Too soon
             }
             
-            // Trong check_ir_auto_control():
             struct ir_command *cmd = find_ir_command(rule->cmd_id);
             if (cmd == NULL) {
                 LOG_WRN("Rule %d: Command ID %u not found", i, rule->cmd_id);
@@ -1196,16 +1206,23 @@ static void check_ir_auto_control(void) {
             LOG_INF("   Sending Command %u: %s (protocol %d)", 
                     cmd->cmd_id, cmd->description, cmd->protocol);
 
-            // ⭐ Send command (auto-detect decoded or raw)
+            // ⭐ Send command
             int ret = ir_send_command(cmd);
 
             if (ret == 0) {
                 rule->last_sent_time = now;
+                rule->last_sent_cmd_id = rule->cmd_id;  // ⭐ Lưu cmd_id vừa gửi
                 ir_auto_state.last_matched_rule = i;
-                LOG_INF("✅ Auto IR sent successfully");
+                LOG_INF("✅ Auto IR sent successfully (cmd %u saved)", rule->cmd_id);
                 break;
             } else {
                 LOG_ERR("❌ Auto IR failed: %d", ret);
+            }
+        } else {
+            // ⭐ Khi nhiệt độ ra khỏi range, reset last_sent_cmd_id
+            if (rule->last_sent_cmd_id != 0) {
+                LOG_DBG("Rule %d: Temp out of range - resetting last cmd", i);
+                rule->last_sent_cmd_id = 0;
             }
         }
     }
@@ -2199,7 +2216,16 @@ static ssize_t write_ir_auto_rules(struct bt_conn *conn, const struct bt_gatt_at
         rule->enabled = (data[2] != 0);
         rule->temp_min = (int16_t)((data[3] << 8) | data[4]);
         rule->temp_max = (int16_t)((data[5] << 8) | data[6]);
-        rule->cmd_id = (data[7] << 8) | data[8];
+        
+        
+        // ⭐ Nếu cmd_id thay đổi, reset last_sent_cmd_id
+        uint16_t new_cmd_id = (data[7] << 8) | data[8];
+        if (rule->cmd_id != new_cmd_id) {
+            rule->last_sent_cmd_id = 0;  // Reset khi cmd_id thay đổi
+        }
+        rule->cmd_id = new_cmd_id;
+        
+        
         rule->min_interval_ms = ((uint32_t)data[9] << 24) | 
                                ((uint32_t)data[10] << 16) |
                                ((uint32_t)data[11] << 8) | 
