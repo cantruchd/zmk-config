@@ -1640,6 +1640,11 @@ static ssize_t write_ir_learning(struct bt_conn *conn, const struct bt_gatt_attr
             
             uint16_t cmd_id = (data[1] << 8) | data[2];
             uint8_t desc_len = data[3];
+
+            // ✅ Kiểm tra buffer đủ lớn
+            if (4 + desc_len + 1 > len) {  // +1 cho is_off flag
+                return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+            }
             
             if (ir_data.data_len == 0) {
                 LOG_ERR("No IR data to save");
@@ -1672,6 +1677,9 @@ static ssize_t write_ir_learning(struct bt_conn *conn, const struct bt_gatt_attr
             cmd_ptr->cmd_id = cmd_id;
             memcpy(cmd_ptr->description, &data[4], desc_len);
             cmd_ptr->description[desc_len] = '\0';
+            
+            // ✅ ĐỌC is_off_command flag
+            cmd_ptr->is_off_command = (data[4 + desc_len] != 0);
             
             save_ir_commands();
             k_mutex_unlock(&ir_mutex);
