@@ -1910,6 +1910,10 @@ static ssize_t write_ir_cmd_db(struct bt_conn *conn, const struct bt_gatt_attr *
                     cmd_id, cmd->description, cmd->protocol, cmd->decoded.bits);
         }
         
+        // ⭐ THÊM SAU KHI XỬ LÝ protocol data:
+        cmd->is_off_command = (data[7 + desc_len] != 0);  // Đọc is_off flag
+        log("💾 Updated cmd %u: is_off=%d", cmd_id, cmd->is_off_command);
+
         // Save to NVS
         save_ir_commands();
         
