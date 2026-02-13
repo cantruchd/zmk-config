@@ -1226,36 +1226,39 @@ static void check_ir_auto_control(void) {
     }
 }
 
-// Generate 38kHz carrier for specified duration
 static void ir_carrier_on(uint32_t duration_us) {
     if (!device_is_ready(ir_pwm_dev)) {
         LOG_ERR("PWM device not ready");
         return;
     }
     
-    // Set 38kHz PWM with 50% duty cycle
     int ret = ir_pwm_set(IR_CARRIER_PERIOD_NS, IR_CARRIER_PULSE_NS);
     if (ret < 0) {
         LOG_ERR("PWM set failed: %d", ret);
         return;
     }
     
-    // Wait for duration
-    k_busy_wait(duration_us);
+    // ⭐ FIX: Dùng k_usleep() cho timing chính xác hơn
+    if (duration_us < 1000) {
+        k_busy_wait(duration_us);  // Chỉ dùng busy-wait cho <1ms
+    } else {
+        k_usleep(duration_us);  // Dùng sleep cho ≥1ms
+    }
     
-    // Stop PWM
     ir_pwm_set(IR_CARRIER_PERIOD_NS, 0);
 }
 
-// No carrier (space) - PWM off
 static void ir_carrier_off(uint32_t duration_us) {
     if (!device_is_ready(ir_pwm_dev)) return;
     
-    // Ensure PWM is off
     ir_pwm_set(IR_CARRIER_PERIOD_NS, 0);
     
-    // Wait for duration
-    k_busy_wait(duration_us);
+    // ⭐ FIX: Same logic
+    if (duration_us < 1000) {
+        k_busy_wait(duration_us);
+    } else {
+        k_usleep(duration_us);
+    }
 }
 
 // Send NEC header
