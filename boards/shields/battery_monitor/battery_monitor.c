@@ -934,6 +934,9 @@ static int save_ir_auto_state(void);
 static int ir_start_learning(void);
 static inline uint32_t cycles_to_us(uint32_t cycles);
 
+// Sau ir_rx structure
+static bool ir_decode_done = false;  // ⭐ Cờ đánh dấu đã decode
+
 
 
 // ============================================================================
@@ -944,6 +947,13 @@ static inline uint32_t cycles_to_us(uint32_t cycles);
 
 static void ir_detect_and_decode(void) {
     k_mutex_lock(&ir_rx_mutex, K_FOREVER);
+
+        // ⭐ NẾU ĐÃ DECODE RỒI → THOÁT NGAY
+    if (ir_decode_done) {
+        LOG_DBG("IR already decoded - skipping");
+        k_mutex_unlock(&ir_rx_mutex);
+        return;
+    }
     
     if (ir_rx.pulse_count < 10) {
         LOG_WRN("Too few pulses: %d", ir_rx.pulse_count);
@@ -996,6 +1006,8 @@ static void ir_detect_and_decode(void) {
         ir_data.data_len = sizeof(struct ir_decoded_data);
         memcpy(ir_data.data, &decoded, sizeof(decoded));
     }
+
+    ir_decode_done = true;  // ⭐ ĐÁNH DẤU ĐÃ DECODE & NOTIFY
     
     k_mutex_unlock(&ir_mutex);
     
@@ -1502,6 +1514,8 @@ static int ir_start_learning(void) {
     ir_rx.pulse_count = 0;
     ir_rx.is_receiving = false;
     ir_learning_active = true;  // ⭐ Kích hoạt learning mode
+    // Sau ir_rx structure
+    static bool ir_decode_done = false;  // ⭐ Cờ đánh dấu đã decode
     
     k_mutex_unlock(&ir_rx_mutex);
     
